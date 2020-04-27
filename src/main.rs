@@ -1,4 +1,6 @@
-use crate::Expr::{Associative, UnaryExpr};
+use crate::AssociativeOp::{Addition, Multiplication};
+use crate::Expr::{AssociativeExpr, Constant, UnaryExpr, Variable};
+use crate::UnaryOp::Minus;
 use regex::Regex;
 use std::fmt::Formatter;
 use std::str::FromStr;
@@ -14,10 +16,9 @@ enum Expr {
         op: UnaryOp,
         a: Box<Expr>,
     },
-    Associative {
-        a: Box<Expr>,
-        op: BinaryOp,
-        b: Box<Expr>,
+    AssociativeExpr {
+        op: AssociativeOp,
+        args: Vec<Box<Expr>>,
     },
 }
 
@@ -27,9 +28,9 @@ enum UnaryOp {
 }
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
-enum BinaryOp {
-    Add,
-    Mul,
+enum AssociativeOp {
+    Addition,
+    Multiplication,
 }
 
 impl std::fmt::Display for UnaryOp {
@@ -38,20 +39,20 @@ impl std::fmt::Display for UnaryOp {
             f,
             "{}",
             match self {
-                UnaryOp::Minus => '-',
+                Minus => '-',
             }
         )
     }
 }
 
-impl std::fmt::Display for BinaryOp {
+impl std::fmt::Display for AssociativeOp {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         write!(
             f,
             "{}",
             match self {
-                BinaryOp::Add => '+',
-                BinaryOp::Mul => '*',
+                Addition => '+',
+                Multiplication => '*',
             }
         )
     }
@@ -60,21 +61,24 @@ impl std::fmt::Display for BinaryOp {
 impl std::fmt::Display for Expr {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         match self {
-            Expr::Variable(v) => write!(f, "{}", v),
-            Expr::Constant(c) => write!(f, "{}", c),
+            Variable(name) => write!(f, "{}", name),
+            Constant(c) => write!(f, "{}", c),
             UnaryExpr { op, a } => write!(f, "{} ({})", op, a),
-            Associative { a, b, op } => match op {
-                BinaryOp::Add => write!(f, "{} {} {}", a, op, b),
-                BinaryOp::Mul => match **a {
-                    Associative { .. } => match **b {
-                        Associative { .. } => write!(f, "({}) {} ({})", a, op, b),
-                        _ => write!(f, "({}) {} {}", a, op, b),
-                    },
-                    _ => match **b {
-                        Associative { .. } => write!(f, "{} {} ({})", a, op, b),
-                        _ => write!(f, "{} {} {}", a, op, b),
-                    },
-                },
+            AssociativeExpr { op, args } => match op {
+                Addition => {
+                    let arg_strings = args.iter().map(|e| e.to_string()).collect::<Vec<String>>();
+                    write!(f, "{}", &arg_strings[..].join(" + "))
+                }
+                Multiplication => {
+                    let arg_strings = args
+                        .iter()
+                        .map(|e| match **e {
+                            Variable { .. } | Constant { .. } | UnaryExpr { .. } => e.to_string(),
+                            AssociativeExpr { .. } => format!("({})", e),
+                        })
+                        .collect::<Vec<String>>();
+                    write!(f, "{}", &arg_strings[..].join(" * "))
+                }
             },
         }
     }
@@ -83,12 +87,12 @@ impl std::fmt::Display for Expr {
 impl PartialEq for Expr {
     fn eq(&self, other: &Self) -> bool {
         return match self {
-            Expr::Variable(name) => match other {
-                Expr::Variable(other_name) => name == other_name,
+            Variable(name) => match other {
+                Variable(other_name) => name == other_name,
                 _ => false,
             },
-            Expr::Constant(constant) => match other {
-                Expr::Constant(other_constant) => constant == other_constant,
+            Constant(c) => match other {
+                Constant(other_c) => c == other_c,
                 _ => false,
             },
             UnaryExpr { a, op } => match other {
@@ -98,88 +102,132 @@ impl PartialEq for Expr {
                 } => *op == *other_op && *a == *other_a,
                 _ => false,
             },
-            Associative { a, b, op } => match other {
-                Associative {
-                    a: other_a,
-                    b: other_b,
+            AssociativeExpr { op, args } => match other {
+                AssociativeExpr {
                     op: other_op,
-                } => *op == *other_op && a == other_a && b == other_b,
+                    args: other_args,
+                } => *op == *other_op && args == other_args,
                 _ => false,
             },
         };
     }
 }
 
+fn variable(name: &str) -> Box<Expr> {
+    Box::new(Variable(String::from(name)))
+}
+
 fn constant(c: f64) -> Box<Expr> {
-    Box::new(Expr::Constant(c))
+    Box::new(Constant(c))
 }
 
-fn binary_expr(a: Box<Expr>, b: Box<Expr>, op: BinaryOp) -> Box<Expr> {
-    Box::new(Associative { a, b, op })
+fn associative_expr(op: AssociativeOp, args: Vec<Box<Expr>>) -> Box<Expr> {
+    Box::new(AssociativeExpr { op, args })
 }
 
-fn unary_expr(a: Box<Expr>, op: UnaryOp) -> Box<Expr> {
+fn unary_expr(op: UnaryOp, a: Box<Expr>) -> Box<Expr> {
     Box::new(UnaryExpr { a, op })
 }
 
+// todo check if it is possible to create a variadic version of this function using macro's
+#[allow(dead_code)]
 fn product(a: Box<Expr>, b: Box<Expr>) -> Box<Expr> {
-    Box::new(Associative {
-        a,
-        b,
-        op: BinaryOp::Mul,
+    Box::new(AssociativeExpr {
+        op: Multiplication,
+        args: vec![a, b],
     })
 }
 
+fn product_skeleton(size: usize) -> Box<Expr> {
+    Box::new(AssociativeExpr {
+        op: Multiplication,
+        args: Vec::with_capacity(size),
+    })
+}
+
+#[allow(dead_code)]
 fn sum(a: Box<Expr>, b: Box<Expr>) -> Box<Expr> {
-    Box::new(Associative {
-        a,
-        b,
-        op: BinaryOp::Add,
+    Box::new(AssociativeExpr {
+        op: Addition,
+        args: vec![a, b],
+    })
+}
+
+fn sum_skeleton(size: usize) -> Box<Expr> {
+    Box::new(AssociativeExpr {
+        op: Addition,
+        args: Vec::with_capacity(size),
     })
 }
 
 impl Eq for Expr {}
 
 impl Expr {
+    // todo refactor expr as a trait
+    fn get_args(&mut self) -> Option<&mut Vec<Box<Expr>>> {
+        match self {
+            AssociativeExpr { op: _, args } => Some(args),
+            _ => None,
+        }
+    }
+
     fn copy(&self) -> Box<Expr> {
         Box::new(match self {
-            Expr::Variable(string) => Expr::Variable(string.clone()),
-            Expr::Constant(c) => Expr::Constant(*c),
-            Expr::UnaryExpr { a, op } => Expr::UnaryExpr {
+            Variable(name) => Variable(name.clone()),
+            Constant(c) => Constant(*c),
+            UnaryExpr { a, op } => UnaryExpr {
                 a: a.copy(),
                 op: op.clone(),
             },
-            Associative { a, b, op } => Expr::Associative {
-                a: a.copy(),
-                b: b.copy(),
+            AssociativeExpr { op, args } => AssociativeExpr {
                 op: op.clone(),
+                args: args.iter().map(|arg| arg.copy()).collect(),
             },
         })
     }
 
     fn derivative(&self, x: &Box<Expr>) -> Box<Expr> {
-        if let Expr::Variable(x_str) = &**x {
+        if let Variable(x_str) = &**x {
             match self {
-                Expr::Variable(self_str) => {
+                Variable(self_str) => {
                     if self_str == x_str {
                         constant(1.0)
                     } else {
                         constant(0.0)
                     }
                 }
-                Expr::Constant(_) => constant(0.0),
+                Constant(_) => constant(0.0),
                 UnaryExpr { a, op } => match *op {
                     UnaryOp::Minus => Box::new(Expr::UnaryExpr {
                         op: op.clone(),
                         a: a.derivative(&x),
                     }),
                 },
-                Associative { a, b, op } => match op {
-                    BinaryOp::Add => binary_expr(a.derivative(&x), b.derivative(&x), op.clone()),
-                    BinaryOp::Mul => sum(
-                        product(a.copy(), b.derivative(&x)),
-                        product(a.derivative(&x), b.copy()),
-                    ),
+                AssociativeExpr { op, args } => match op {
+                    Addition => {
+                        associative_expr(Addition, args.iter().map(|e| e.derivative(&x)).collect())
+                    }
+                    Multiplication => {
+                        // let a = &args[0];
+                        // let b = &args[1];
+                        // sum(
+                        //     product_of_2(a.copy(), b.derivative(&x)),
+                        //     product_of_2(a.derivative(&x), b.copy()),
+                        // );
+                        let mut derivative = sum_skeleton(args.len());
+                        let terms = derivative.get_args().unwrap();
+                        for i in 0..args.len() {
+                            terms.push(product_skeleton(args.len()));
+                            let factors = terms[i].get_args().unwrap();
+                            for j in 0..args.len() {
+                                factors.push(match j == i {
+                                    true => args[j].derivative(&x),
+                                    false => args[j].copy(),
+                                });
+                            }
+                        }
+                        derivative
+                    }
                 },
             }
         } else {
@@ -189,7 +237,10 @@ impl Expr {
 
     fn simplify_leaves(&self) -> Box<Expr> {
         match self {
-            Associative { a, b, op } => binary_expr(a.simplify(), b.simplify(), *op),
+            AssociativeExpr { op, args } => {
+                associative_expr(op.clone(), args.iter().map(|e| e.simplify()).collect())
+            }
+            UnaryExpr { op, a } => unary_expr(op.clone(), a.simplify()),
             _ => self.copy(),
         }
     }
@@ -197,48 +248,36 @@ impl Expr {
     fn simplify(&self) -> Box<Expr> {
         let simplified_leaves = self.simplify_leaves();
         let simplified = match *simplified_leaves {
-            Associative { a, b, op } => {
-                if let Expr::Constant(a) = *a {
-                    if let Expr::Constant(b) = *b {
-                        match op {
-                            BinaryOp::Add => constant(a + b),
-                            BinaryOp::Mul => constant(a * b),
-                        }
-                    } else if a == 0.0 {
-                        match op {
-                            BinaryOp::Add => b.simplify(),
-                            BinaryOp::Mul => constant(0.0),
-                        }
-                    } else if a == 1.0 {
-                        match op {
-                            BinaryOp::Mul => b.simplify(),
-                            _ => self.simplify_leaves(),
-                        }
-                    } else {
-                        self.simplify_leaves()
-                    }
-                } else if let Expr::Constant(b) = *b {
-                    if b == 0.0 {
-                        match op {
-                            BinaryOp::Add => a.simplify(),
-                            BinaryOp::Mul => constant(0.0),
-                        }
-                    } else if b == 1.0 {
-                        match op {
-                            BinaryOp::Mul => a.simplify(),
-                            _ => self.simplify_leaves(),
-                        }
-                    } else {
-                        self.simplify_leaves()
-                    }
-                } else if op == BinaryOp::Add && a == b {
-                    product(constant(2.0), b)
+            AssociativeExpr { op, args } => {
+                if op == Multiplication && args.contains(&constant(0.0)) {
+                    constant(0.0)
                 } else {
-                    self.simplify_leaves()
+                    let mut units_removed = Vec::with_capacity(args.len());
+                    for arg in args {
+                        match *arg {
+                            Constant(c) => {
+                                if c != match op {
+                                    Addition => 0.0,
+                                    Multiplication => 1.0
+                                } {
+                                    units_removed.push(arg)
+                                }
+                            }
+                            _ => {units_removed.push(arg)}
+                        }
+                    }
+                    match units_removed.len() {
+                        0 => match op {
+                            Addition => constant(0.0),
+                            Multiplication => constant(1.0)
+                        }
+                        1 => units_removed[0].copy(),
+                        _ => associative_expr(op, units_removed)
+                    }
+
                 }
             }
-            Expr::UnaryExpr { op, a } => unary_expr(a.simplify(), op),
-            _ => self.simplify_leaves(),
+            _ => self.copy(),
         };
         simplified
     }
@@ -255,10 +294,9 @@ fn parse(expr: &str) -> Box<Expr> {
         if str_before.len() == 0 || str_after.len() == 0 {
             panic!("invalid expression: {}", expr)
         } else {
-            Expr::Associative {
-                a: parse(str_before),
-                b: parse(str_after),
-                op: BinaryOp::Add,
+            AssociativeExpr {
+                op: Addition,
+                args: vec![parse(str_before), parse(str_after)],
             }
         }
     } else if let Some(i) = expr.find('-') {
@@ -267,13 +305,9 @@ fn parse(expr: &str) -> Box<Expr> {
         if str_before.len() == 0 || str_after.len() == 0 {
             panic!("invalid expression: {}", expr)
         } else {
-            Expr::Associative {
-                a: parse(str_before),
-                b: Box::new(UnaryExpr {
-                    a: parse(str_after),
-                    op: UnaryOp::Minus,
-                }),
-                op: BinaryOp::Add,
+            AssociativeExpr {
+                op: Addition,
+                args: vec![parse(str_before), unary_expr(Minus, parse(str_after))],
             }
         }
     } else if let Some(i) = expr.find("*") {
@@ -282,16 +316,15 @@ fn parse(expr: &str) -> Box<Expr> {
         if str_before.len() == 0 || str_after.len() == 0 {
             panic!("invalid expression: {}", expr)
         } else {
-            Expr::Associative {
-                a: parse(str_before),
-                b: parse(str_after),
-                op: BinaryOp::Mul,
+            AssociativeExpr {
+                op: Multiplication,
+                args: vec![parse(str_before), parse(str_after)],
             }
         }
     } else if let Some(match_) = VARIABLE.find(expr) {
-        Expr::Variable(String::from(match_.as_str()))
+        Variable(String::from(match_.as_str()))
     } else if let Some(match_) = NUMBER.find(expr) {
-        Expr::Constant(f64::from_str(match_.as_str()).unwrap())
+        Constant(f64::from_str(match_.as_str()).unwrap())
     } else {
         panic!(
             "invalid expression: {}, no operators, variables, or numbers found",
@@ -301,20 +334,13 @@ fn parse(expr: &str) -> Box<Expr> {
 }
 
 fn main() {
-    let x = Box::new(Expr::Variable(String::from("x")));
-    let y = Box::new(Expr::Variable(String::from("y")));
-    let expr = Expr::Associative {
-        a: x.copy(),
-        b: y.copy(),
-        op: BinaryOp::Add,
-    };
-    println!("{}", expr);
-    println!("{}", expr.derivative(&x));
-    println!("{}", expr.derivative(&x).simplify());
-    // println!();
-    // println!("{}", parse("a*x+y*y+555"));
-    // println!("{}", parse("a*x+y*y+555").derivative(&x));
-    // println!("{}", parse("a*x+y*y+555").derivative(&x).simplify());
+    let x = variable("x");
+
+    println!();
+    println!("{}", parse("a*x+y*y+555"));
+    println!("{}", parse("a*x+y*y+555").derivative(&x));
+    println!("{}", parse("a*x+y*y+555").derivative(&x).simplify());
+    println!("{:?}", parse("a*x+y*y+555").derivative(&x).simplify());
     // println!();
     // println!("{}", parse("a*x+y*y+555"));
     // println!("{}", parse("a*x+y*y+555").derivative(&y));
@@ -325,6 +351,17 @@ fn main() {
     // println!("{}", parse("x*x*x").derivative(&x).simplify());
 
     let expr = parse("x*x*x");
+    println!();
+    println!("{}", expr);
+    println!("{}", expr.derivative(&x));
+    println!("{}", expr.derivative(&x).simplify());
+
+    let n = 3;
+    let mut expr = product_skeleton(n);
+    let factors = expr.get_args().unwrap();
+    for _ in 0..n {
+        factors.push(variable("x"));
+    }
     println!();
     println!("{}", expr);
     println!("{}", expr.derivative(&x));
