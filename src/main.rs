@@ -601,25 +601,25 @@ impl Expr {
                         }
                     }
                     // could make the code above more efficient by using sort sooner
-
                     match non_constants.len() {
                         0 => constant(accumulated_constant),
-                        1 => {
-                            if accumulated_constant == unit {
+                        _ => {
+                            if non_constants.len() == 1 && accumulated_constant == unit {
                                 non_constants[0].clone()
                             } else {
-                                match op {
-                                    Addition => {
-                                        non_constants.push(constant(accumulated_constant));
-                                    }
-                                    Multiplication => {
-                                        non_constants.insert(0, constant(accumulated_constant));
+                                if accumulated_constant != unit {
+                                    match op {
+                                        Addition => {
+                                            non_constants.push(constant(accumulated_constant));
+                                        }
+                                        Multiplication => {
+                                            non_constants.insert(0, constant(accumulated_constant));
+                                        }
                                     }
                                 }
                                 associative_expr(op, non_constants)
                             }
                         }
-                        _ => associative_expr(op, non_constants),
                     }
                 }
             }
