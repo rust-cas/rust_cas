@@ -1,14 +1,33 @@
-use crate::AssociativeOp::{Addition, Multiplication};
-use crate::Expr::{AssociativeExpr, Constant, Power, UnaryExpr, Variable};
-use crate::UnaryOp::Minus;
+use itertools::Itertools;
 use regex::Regex;
+
 use std::cmp::Ordering;
 use std::fmt::Formatter;
 use std::str::FromStr;
 
+use crate::AssociativeOp::{Addition, Multiplication};
+use crate::Expr::{AssociativeExpr, Constant, Power, UnaryExpr, Variable};
+use crate::UnaryOp::Minus;
+
+// todo: try to remove box in Vec<Box<Expr>>
+// todo: define a VecOfExpr type
+
 macro_rules! debug {
     ($e:expr) => {
         println!("{} = {}", stringify!($e), $e);
+    };
+}
+
+macro_rules! product {
+    ( $( $x:expr ),* ) => {
+        Box::new(AssociativeExpr{op: Multiplication, args: vec![ $($x,)* ]})
+    };
+}
+
+#[allow(unused_macros)]
+macro_rules! sum  {
+    ( $( $x:expr ),* ) => {
+        Box::new(AssociativeExpr{op: Addition, args: vec![ $($x,)* ]})
     };
 }
 
@@ -71,11 +90,12 @@ impl PartialEq for Expr {
     }
 }
 
+fn clone(v: &[Box<Expr>]) -> Vec<Box<Expr>> {
+    v.iter().map(|e| Box::new(*e.clone())).collect()
+}
+
 fn sort(v: &Vec<Box<Expr>>) -> Vec<Box<Expr>> {
-    let mut sorted = Vec::with_capacity(v.len());
-    for expr in v {
-        sorted.push(expr.copy());
-    }
+    let mut sorted = clone(v);
     sorted.sort();
     sorted
 }
@@ -247,15 +267,6 @@ fn unary_expr(op: UnaryOp, a: Box<Expr>) -> Box<Expr> {
     Box::new(UnaryExpr { a, op })
 }
 
-// todo check if it is possible to create a variadic version of this function using macro's
-#[allow(dead_code)]
-fn product(a: Box<Expr>, b: Box<Expr>) -> Box<Expr> {
-    Box::new(AssociativeExpr {
-        op: Multiplication,
-        args: vec![a, b],
-    })
-}
-
 fn product_skeleton(size: usize) -> Box<Expr> {
     Box::new(AssociativeExpr {
         op: Multiplication,
@@ -263,13 +274,7 @@ fn product_skeleton(size: usize) -> Box<Expr> {
     })
 }
 
-#[allow(dead_code)]
-fn sum(a: Box<Expr>, b: Box<Expr>) -> Box<Expr> {
-    Box::new(AssociativeExpr {
-        op: Addition,
-        args: vec![a.copy(), b.copy()],
-    })
-}
+
 
 fn sum_skeleton(size: usize) -> Box<Expr> {
     Box::new(AssociativeExpr {
@@ -280,9 +285,107 @@ fn sum_skeleton(size: usize) -> Box<Expr> {
 
 fn power(base: Box<Expr>, exp: Box<Expr>) -> Box<Expr> {
     Box::new(Power {
-        base: base.copy(),
-        exp: exp.copy(),
+        base: base.clone(),
+        exp: exp.clone(),
     })
+}
+
+#[allow(dead_code)]
+fn expandable(expr: Box<Expr>) -> bool {
+    if let AssociativeExpr { ref op, ref args } = *expr {
+        op == &Multiplication
+            && args.iter().any(|arg| {
+                if let AssociativeExpr {
+                    op: ref child_op,
+                    args: _,
+                } = **arg
+                {
+                    *child_op == Addition
+                } else {
+                    false
+                }
+            })
+    } else {
+        false
+    }
+}
+
+
+
+impl Clone for Box<Expr> {
+    fn clone(&self) -> Self {
+        Box::new(match **self {
+            Variable(ref name) => Variable(name.clone()),
+            Constant(c) => Constant(c),
+            UnaryExpr { ref a, ref op } => UnaryExpr {
+                a: (*a).clone(),
+                op: *op,
+            },
+            AssociativeExpr { ref op, ref args } => AssociativeExpr {
+                op: *op,
+                args: args.iter().map(|arg| arg.clone()).collect(),
+            },
+            Power { ref base, ref exp } => Power {
+                base: (*base).clone(),
+                exp: (*exp).clone(),
+            },
+        })
+    }
+}
+
+
+
+fn expand(expr: Box<Expr>) -> Box<Expr> {
+    if let AssociativeExpr { ref op, ref args } = *expr {
+        if op == &Multiplication {
+            let unexpandable: Vec<&Box<Expr>> = args
+                .iter()
+                .filter(|arg| {
+                    if let AssociativeExpr {
+                        op: ref child_op,
+                        args: _,
+                    } = ***arg
+                    {
+                        *child_op == Multiplication
+                    } else {
+                        true
+                    }
+                })
+                .collect();
+            let expanded_args = args
+                .iter()
+                .filter_map(|arg| {
+                    if let AssociativeExpr {
+                        op: ref child_op,
+                        args: ref child_args,
+                    } = **arg
+                    {
+                        if *child_op == Addition {
+                            Some(clone(&*child_args))
+                        } else {
+                            None
+                        }
+                    } else {
+                        None
+                    }
+                })
+                .multi_cartesian_product();
+            let expanded_args = expanded_args
+                .map(|mut e: Vec<Box<Expr>>| {
+                    e.reserve(unexpandable.len());
+                    for expr in &unexpandable {
+                        e.push((*expr).clone())
+                    }
+                    associative_expr(Multiplication, e)
+                })
+                .collect();
+            associative_expr(Addition, expanded_args)
+        } else {
+            expr
+        }
+    } else {
+        expr
+    }
 }
 
 impl Expr {
@@ -293,21 +396,21 @@ impl Expr {
         }
     }
 
-    fn copy(&self) -> Box<Expr> {
+    fn clone(&self) -> Box<Expr> {
         Box::new(match self {
             Variable(name) => Variable(name.clone()),
             Constant(c) => Constant(*c),
             UnaryExpr { a, op } => UnaryExpr {
-                a: a.copy(),
-                op: op.clone(),
+                a: (*a).clone(),
+                op: *op,
             },
             AssociativeExpr { op, args } => AssociativeExpr {
-                op: op.clone(),
-                args: args.iter().map(|arg| arg.copy()).collect(),
+                op: *op,
+                args: args.iter().map(|arg| arg.clone()).collect(),
             },
             Power { base, exp } => Power {
-                base: base.copy(),
-                exp: exp.copy(),
+                base: (*base).clone(),
+                exp: (*exp).clone(),
             },
         })
     }
@@ -342,7 +445,7 @@ impl Expr {
                             for j in 0..args.len() {
                                 factors.push(match j == i {
                                     true => args[j].derivative(&x),
-                                    false => args[j].copy(),
+                                    false => args[j].clone(),
                                 });
                             }
                         }
@@ -354,7 +457,7 @@ impl Expr {
                         if n == 1.0 {
                             constant(1.0)
                         } else {
-                            product(constant(n), power(base.copy(), constant(n - 1.0)))
+                            product!(constant(n), power((*base).clone(), constant(n - 1.0)))
                         }
                     }
                     _ => panic!("derivative cannot handle variable exponents yet"),
@@ -371,67 +474,64 @@ impl Expr {
                 associative_expr(op.clone(), args.iter().map(|e| e.simplify()).collect())
             }
             UnaryExpr { op, a } => unary_expr(op.clone(), a.simplify()),
-            _ => self.copy()
+            _ => self.clone(),
         }
     }
 
-    // fn expand(&self) -> Box<Expr> {
-    //     let mut modified = false;
-    //     match *self {
-    //
-    //         AssociativeExpr { op, args} => {
-    //             match op {
-    //                 Multiplication => {
-    //                     mi
-    //                     *self
-    //                 }
-    //                 _ => *self
-    //             }
-    //         }
-    //         _ => self
-    //     }
-    // }
-
-    // fn group(&self) -> Box<Expr> {
-    //     // group equal expressions
-    //     // for example, turn x+x into 2*x, or x*x into x^2
-    //     match self {
-    //         AssociativeExpr { op, args } => {
-    //             let args = sort(&args);
-    //             let mut grouped = Vec::with_capacity(args.len());
-    //             let mut i = 0;
-    //             while i < args.len() {
-    //                 let mut k = i;
-    //                 let current = &args[i];
-    //                 loop {
-    //                     k += 1;
-    //                     if k >= args.len() - 1 || *current != args[k] {
-    //                         break;
-    //                     }
-    //                 }
-    //                 if k < args.len() && *current == args[k] {
-    //                     k += 1
-    //                 }
-    //                 if k - i == 1 {
-    //                     grouped.push(args[i].copy());
-    //                 } else {
-    //                     let repeated = args[i].copy();
-    //                     let times = constant((k - i) as f64);
-    //                     grouped.push(match op {
-    //                         Addition => product(times, repeated),
-    //                         Multiplication => power(repeated, times),
-    //                     });
-    //                 }
-    //                 i = k;
-    //             }
-    //             match grouped.len() {
-    //                 1 => grouped[0].copy(),
-    //                 _ => associative_expr(*op, grouped),
-    //             }
-    //         }
-    //         _ => self.copy(),
-    //     }
-    // }
+    #[allow(dead_code)]
+    fn group(&self) -> Box<Expr> {
+        // group equal expressions
+        // for example, turn x+x into 2*x, or x*x into x^2
+        match self {
+            AssociativeExpr { op, args } => {
+                let args = sort(&args);
+                let mut grouped = Vec::with_capacity(args.len());
+                let mut i = 0;
+                while i < args.len() {
+                    let mut k = i;
+                    let current = &args[i];
+                    loop {
+                        k += 1;
+                        if k >= args.len() - 1 || *current != args[k] {
+                            break;
+                        }
+                    }
+                    if k < args.len() && *current == args[k] {
+                        k += 1
+                    }
+                    if k - i == 1 {
+                        grouped.push(args[i].clone());
+                    } else {
+                        let repeated = args[i].clone();
+                        let times = constant((k - i) as f64);
+                        grouped.push(match op {
+                            Addition => match *repeated {
+                                AssociativeExpr { op:repeated_op, args: ref repeated_args} => {
+                                    // if the repeated expression is a multiplication,
+                                    // we just insert repeated into repeated_args
+                                    if repeated_op == Multiplication {
+                                        let mut repeated_args= clone(&repeated_args);
+                                        repeated_args.insert(0, times);
+                                        Box::new(AssociativeExpr {op: Multiplication, args: repeated_args})
+                                    } else {
+                                        product!(times, repeated)
+                                    }
+                                }
+                                _ => product!(times, repeated)
+                            }
+                            Multiplication => power(repeated, times),
+                        });
+                    }
+                    i = k;
+                }
+                match grouped.len() {
+                    1 => grouped[0].clone(),
+                    _ => associative_expr(*op, grouped),
+                }
+            }
+            _ => self.clone(),
+        }
+    }
 
     fn simplify(&self) -> Box<Expr> {
         let simplified_leaves = self.simplify_leaves();
@@ -471,7 +571,7 @@ impl Expr {
                     };
                     let mut accumulated_constant = unit;
                     for arg in args {
-                        match *arg.copy() {
+                        match *arg.clone() {
                             AssociativeExpr {
                                 op: child_op,
                                 args: child_args,
@@ -490,14 +590,14 @@ impl Expr {
                                         }
                                     }
                                 } else {
-                                    non_constants.push(arg.copy());
+                                    non_constants.push(arg.clone());
                                 }
                             }
                             Constant(c) => match op {
                                 Addition => accumulated_constant += c,
                                 Multiplication => accumulated_constant *= c,
                             },
-                            _ => non_constants.push(arg.copy()),
+                            _ => non_constants.push(arg.clone()),
                         }
                     }
                     // could make the code above more efficient by using sort sooner
@@ -506,7 +606,7 @@ impl Expr {
                         0 => constant(accumulated_constant),
                         1 => {
                             if accumulated_constant == unit {
-                                non_constants[0].copy()
+                                non_constants[0].clone()
                             } else {
                                 match op {
                                     Addition => {
@@ -523,7 +623,7 @@ impl Expr {
                     }
                 }
             }
-            _ => self.copy(),
+            _ => self.clone(),
         };
         simplified
     }
@@ -598,19 +698,17 @@ fn main() {
     debug!(expr.simplify());
     debug!(expr.derivative(&x).simplify());
 
-    let n = 3;
-    let mut expr = product_skeleton(n);
-    let factors = expr.get_args().unwrap();
-    for _ in 0..n {
-        factors.push(variable("x"));
-    }
-    expr = product(x.copy(), expr.copy());
-    println!();
-    println!("{}", expr);
-    println!("{}", expr.derivative(&x));
-    println!("{}", expr.derivative(&x).simplify());
 
-    let expr = product(product(product(x.copy(), x.copy()), x.copy()), x.copy());
+    let expr = product!(x.clone(), x.clone(), x.clone(), x.clone());
+    println!();
+    debug!(expr);
+    debug!(expr.derivative(&x));
+    debug!(expr.derivative(&x).simplify());
+    debug!(expr.derivative(&x).simplify().group());
+    debug!(expr.derivative(&x).simplify().group().group());
+    debug!(expr.derivative(&x).simplify().group().group().simplify());
+
+    let expr = product!(product!(product!(x.clone(), x.clone()), x.clone()), x.clone());
     println!();
     println!("{}", expr);
     println!("{}", expr.derivative(&x));
@@ -621,9 +719,22 @@ fn main() {
     println!("{}", expr.simplify().derivative(&x));
     println!("{}", expr.simplify().derivative(&x).simplify());
 
-    let expr = power(x.copy(), constant(5.0));
+    let expr = power(x.clone(), constant(5.0));
     println!();
     println!("{}", expr);
     println!("{}", expr.derivative(&x));
     println!("{}", expr.derivative(&x).simplify());
+
+    let expr = product!(constant(2.0), parse("x+y"));
+    let expanded = expand(expr.clone());
+    println!();
+    debug!(expr);
+    debug!(expanded);
+
+    let expr = product!(constant(2.0), parse("x+y"), parse("x+y"));
+    let expanded = expand(expr.clone());
+    println!();
+    debug!(expr);
+    debug!(expanded);
+    debug!(expanded.simplify());
 }
