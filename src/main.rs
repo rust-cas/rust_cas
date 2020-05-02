@@ -7,10 +7,7 @@ use std::str::FromStr;
 
 use crate::AssociativeOp::{Addition, Multiplication};
 use crate::Expr::{AssociativeExpr, Constant, Power, UnaryExpr, Variable};
-use crate::UnaryOp::Minus;
-
-// todo: try to remove box in Vec<Box<Expr>>
-// todo: define a VecOfExpr type
+use crate::UnaryOp::{Minus, Exp};
 
 macro_rules! debug {
     ($e:expr) => {
@@ -50,6 +47,18 @@ enum Expr {
         base: Box<Expr>,
         exp: Box<Expr>,
     },
+}
+
+#[derive(Copy, Clone, Debug, PartialEq, Eq, Ord, PartialOrd)]
+enum UnaryOp {
+    Minus,
+    Exp,
+}
+
+#[derive(Copy, Clone, Debug, PartialEq, Eq, Ord, PartialOrd)]
+enum AssociativeOp {
+    Addition,
+    Multiplication,
 }
 
 impl PartialEq for Expr {
@@ -165,24 +174,14 @@ impl Ord for Expr {
 
 impl Eq for Expr {}
 
-#[derive(Copy, Clone, Debug, PartialEq, Eq, Ord, PartialOrd)]
-enum UnaryOp {
-    Minus,
-}
-
-#[derive(Copy, Clone, Debug, PartialEq, Eq, Ord, PartialOrd)]
-enum AssociativeOp {
-    Addition,
-    Multiplication,
-}
-
 impl std::fmt::Display for UnaryOp {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         write!(
             f,
             "{}",
             match self {
-                Minus => '-',
+                Minus => "-",
+                Exp => "exp"
             }
         )
     }
@@ -206,7 +205,12 @@ impl std::fmt::Display for Expr {
         match self {
             Variable(name) => write!(f, "{}", name),
             Constant(c) => write!(f, "{}", c),
-            UnaryExpr { op, a } => write!(f, "{} ({})", op, a),
+            UnaryExpr { op, a } => {
+                match op {
+                    Minus => write!(f, "- ({})", a),
+                    _ => write!(f, "{}({})", op, a),
+                }
+            },
             AssociativeExpr { op, args } => match op {
                 Addition => {
                     let arg_strings = args.iter().map(|e| e.to_string()).collect::<Vec<String>>();
@@ -379,6 +383,60 @@ fn expand(expr: Expr) -> Expr {
 }
 
 impl Expr {
+
+    fn expand(self) -> Expr {
+        if let AssociativeExpr { ref op, ref args } = self {
+            if op == &Multiplication {
+                let unexpandable: Vec<&Expr> = args
+                    .iter()
+                    .filter(|arg| {
+                        if let AssociativeExpr {
+                            op: ref child_op,
+                            args: _,
+                        } = **arg
+                        {
+                            *child_op == Multiplication
+                        } else {
+                            true
+                        }
+                    })
+                    .collect();
+                let expanded_args = args
+                    .iter()
+                    .filter_map(|arg| {
+                        if let AssociativeExpr {
+                            op: ref child_op,
+                            args: ref child_args,
+                        } = arg
+                        {
+                            if *child_op == Addition {
+                                Some(child_args.clone())
+                            } else {
+                                None
+                            }
+                        } else {
+                            None
+                        }
+                    })
+                    .multi_cartesian_product();
+                let expanded_args = expanded_args
+                    .map(|mut e: Vec<Expr>| {
+                        e.reserve(unexpandable.len());
+                        for expr in &unexpandable {
+                            e.push((**expr).clone())
+                        }
+                        associative_expr(Multiplication, e)
+                    })
+                    .collect();
+                associative_expr(Addition, expanded_args)
+            } else {
+                self
+            }
+        } else {
+            self
+        }
+    }
+
     fn get_args(&mut self) -> Option<&mut Vec<Expr>> {
         match self {
             AssociativeExpr { op: _, args } => Some(args),
@@ -417,7 +475,14 @@ impl Expr {
                 }
                 Constant(_) => constant(0.0),
                 UnaryExpr { a, op } => match op {
-                    UnaryOp::Minus => unary_expr(Minus, a.derivative(x))
+                    Minus => unary_expr(Minus, a.derivative(x)),
+                    Exp => {
+                        if **a == *x {
+                            self.clone()
+                        } else {
+                            product!(self.clone(), a.derivative(&x))
+                        }
+                    }
                 },
                 AssociativeExpr { op, args } => match op {
                     Addition => {
@@ -444,10 +509,14 @@ impl Expr {
                         if n == 1.0 {
                             constant(1.0)
                         } else {
-                            product!(constant(n), power((**base).clone(), constant(n - 1.0)))
+                            if **base == *x {
+                                product!(constant(n), power((**base).clone(), constant(n - 1.0)))
+                            } else {
+                                product!(constant(n), power((**base).clone(), constant(n - 1.0)), (**base).derivative(&x))
+                            }
                         }
                     }
-                    _ => panic!("derivative cannot handle variable exponents yet"),
+                    _ => panic!("derivative can currently only handle constant exponents yet"),
                 },
             }
         } else {
@@ -458,9 +527,10 @@ impl Expr {
     fn simplify_leaves(&self) -> Expr {
         match self {
             AssociativeExpr { op, args } => {
-                associative_expr(op.clone(), args.iter().map(|e| e.simplify()).collect())
+                associative_expr(*op, args.iter().map(|e| e.simplify()).collect())
             }
-            UnaryExpr { op, a } => unary_expr(op.clone(), a.simplify()),
+            UnaryExpr { op, a } => unary_expr(*op, a.simplify()),
+            Power{base, exp} => power(base.simplify(),exp.simplify()),
             _ => self.clone(),
         }
     }
@@ -538,11 +608,8 @@ impl Expr {
                                     count -= 1;
                                     for child_arg in child_args {
                                         count += match *child_arg {
-                                            AssociativeExpr { .. } => 1,
-                                            UnaryExpr { .. } => 1,
-                                            Power { .. } => 1,
-                                            Variable(_) => 1,
                                             Constant(_) => 0,
+                                            _ => 1
                                         }
                                     }
                                 }
@@ -619,8 +686,11 @@ impl Expr {
 fn parse(expr: &str) -> Expr {
     lazy_static! {
         static ref VARIABLE: Regex = Regex::new("[a-zA-Z_]+").unwrap();
-        static ref NUMBER: Regex = Regex::new(r"\d+").unwrap();
+        static ref NUMBER: Regex = Regex::new(r"\d+(.\d*)?(e[+-]?\d+)?").unwrap();
+        static ref UNARY_MINUS: Regex = Regex::new(r"^[\d|e|E]-^[\d]").unwrap();
     }
+    let expr: String = expr.chars().filter(|c| !c.is_whitespace()).collect();
+    let expr= &expr[..];
     if let Some(i) = expr.find('+') {
         let str_before = expr[..i].trim();
         let str_after = expr[i + 1..].trim();
@@ -632,9 +702,9 @@ fn parse(expr: &str) -> Expr {
                 args: vec![parse(str_before), parse(str_after)],
             }
         }
-    } else if let Some(i) = expr.find('-') {
-        let str_before = expr[..i].trim();
-        let str_after = expr[i + 1..].trim();
+    } else if let Some(match_) = UNARY_MINUS.find(expr)  {
+        let str_before = expr[..match_.start()].trim();
+        let str_after = expr[match_.start() + 1..].trim();
         if str_before.len() == 0 || str_after.len() == 0 {
             panic!("invalid expression: {}", expr)
         } else {
@@ -654,10 +724,11 @@ fn parse(expr: &str) -> Expr {
                 args: vec![parse(str_before), parse(str_after)],
             }
         }
+    } else if let Some(match_) = NUMBER.find(expr) {
+        println!("match {:#?}", match_);
+        Constant(f64::from_str(match_.as_str()).unwrap())
     } else if let Some(match_) = VARIABLE.find(expr) {
         Variable(String::from(match_.as_str()))
-    } else if let Some(match_) = NUMBER.find(expr) {
-        Constant(f64::from_str(match_.as_str()).unwrap())
     } else {
         panic!(
             "invalid expression: {}, no operators, variables, or numbers found",
@@ -719,9 +790,15 @@ fn main() {
     debug!(expanded);
 
     let expr = product!(constant(2.0), parse("x+y"), parse("x+y"));
-    let expanded = expand(expr.clone());
+    let expanded = expr.clone().expand();
     println!();
     debug!(expr);
     debug!(expanded);
     debug!(expanded.simplify());
+
+    let expr = unary_expr(Exp, parse("5.1e-1*x*x"));
+    println!();
+    debug!(expr);
+    debug!(expr.derivative(&x));
+    debug!(expr.derivative(&x).simplify());
 }
