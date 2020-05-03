@@ -9,9 +9,15 @@ use crate::AssociativeOp::{Addition, Multiplication};
 use crate::Expr::{AssociativeExpr, Constant, Power, UnaryExpr, Variable};
 use crate::UnaryOp::{Minus, Exp};
 
-macro_rules! debug {
+macro_rules! display {
     ($e:expr) => {
         println!("{} = {}", stringify!($e), $e);
+    };
+}
+
+macro_rules! debug {
+    ($e:expr) => {
+        println!("{} = {:?}", stringify!($e), $e);
     };
 }
 
@@ -683,11 +689,147 @@ impl Expr {
     }
 }
 
+#[derive(Debug, PartialEq, Eq, Ord, PartialOrd)]
+enum TokenType {
+    ConstantT,
+    VariableT,
+    MultiplicationT,
+    AdditionT,
+    RParen,
+    LParen,
+    None
+}
+use crate::TokenType::{ConstantT, VariableT, MultiplicationT, AdditionT, RParen, LParen};
+
+#[derive(Debug, PartialEq, Eq, Ord, PartialOrd)]
+struct Token<'e>(TokenType, &'e str);
+
+impl std::fmt::Display for Token<'_> {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        let Token(_, token) = self;
+        write!(f, "{}", token)
+    }
+}
+
+fn display_vec_token(vec_token: Vec<Token<'_>>) {
+    let arg_strings = vec_token.iter().map(|e| e.to_string()).collect::<Vec<String>>();
+    println!("[{}]", &arg_strings[..].join(", "))
+}
+
+fn shunting_yard(expr: &str) {
+    lazy_static! {
+        static ref STARTS_WITH_NUMBER: Regex = Regex::new(r"^\d+(.\d*)?(e[+-]?\d+)?").unwrap();
+        static ref STARTS_WITH_OPERATOR: Regex = Regex::new(r"^[\+\*-/]").unwrap();
+        static ref STARTS_WITH_VARIABLE: Regex = Regex::new("^[a-zA-Z_]+").unwrap();
+    }
+    let expr: String = expr.chars().filter(|c| !c.is_whitespace()).collect();
+    let mut expr= &expr[..];
+    let mut output = Vec::with_capacity(expr.len());
+    // In a valid expression, the number of operators is less than half the number of characters
+    // Proof:
+    // suppose the expression contains only the +,-,*,/ operators. One of the operators needs
+    // has two inputs that are either two variables, two constants, or one of each.
+    // The other operators need at most one other variable or constant. Hence there should be
+    // at least one more non-operator (i.e. a variable or a constant) than there are operators.
+    // Hence if there are only +,-,*,/ operators, the number of operators is less than half the
+    // number of characters.
+    // Suppose there is another operator. Unary operators such as ln(), sin() or cos(), use at
+    // least for characters. Hence the number ratio of operators to characters will remain less
+    // than one half, even if operators other than +,-,*,/ are used.
+    let mut operators = Vec::with_capacity(expr.len() / 2);
+    while expr != "" {
+        let mut token_type = TokenType::None;
+        let mut token = "";
+        if let Some(match_) = STARTS_WITH_NUMBER.find(expr) {
+            token_type = ConstantT;
+            token = match_.as_str();
+            expr = &expr[match_.end()..];
+        } else if let Some(match_) = STARTS_WITH_OPERATOR.find(expr) {
+            token = match_.as_str();
+            token_type = match token {
+                "*" => MultiplicationT,
+                "+" => AdditionT,
+                _ => panic!("unsupported token: {}", token)
+            };
+            expr = &expr[match_.end()..];
+        } else if let Some(match_) = STARTS_WITH_VARIABLE.find(expr) {
+            token_type = VariableT;
+            token = match_.as_str();
+            expr = &expr[match_.end()..];
+        } else if expr.starts_with('(') {
+            token_type = TokenType::LParen;
+            token = "(";
+            expr = &expr[1..];
+        } else if expr.starts_with(')') {
+            token_type = TokenType::RParen;
+            token = ")";
+            expr = &expr[1..];
+        }
+        match token_type {
+            ConstantT => output.push(Token(ConstantT, token)),
+            VariableT => output.push(Token(VariableT, token)),
+            AdditionT => {
+                while let Some(Token(token_type, _)) = operators.last() {
+                    if *token_type != LParen {
+                        output.push(operators.pop().unwrap());
+                    } else {
+                        break
+                    }
+                }
+                operators.push(Token(AdditionT, token))
+            }
+            MultiplicationT => {
+                while let Some(Token(token_type, _)) = operators.last() {
+                    if *token_type == MultiplicationT {
+                        output.push(operators.pop().unwrap());
+                    } else {
+                        break
+                    }
+                }
+                operators.push(Token(MultiplicationT, token))
+            }
+            LParen => operators.push(Token(LParen, token)),
+            RParen => {
+                let mut found_matching_lparen = false;
+                while let Some(Token(token_type, _)) = operators.last() {
+                    if *token_type != LParen {
+                        output.push(operators.pop().unwrap())
+                    } else {
+                        operators.pop();
+                        found_matching_lparen = true;
+                        break
+                    }
+                }
+                if !found_matching_lparen {
+                    panic!(
+                        "The expression is not valid. The right parenthesis before {} cannot be matched"
+                        , expr);
+                }
+
+            }
+            TokenType::None => {
+                panic!("The expression is not valid. No operator, variable, or constant found at {}",
+                       expr);
+            }
+        }
+    }
+    while let Some(Token(token_type, _)) = operators.last() {
+        if *token_type != LParen {
+            output.push(operators.pop().unwrap())
+        } else {
+            panic!(
+                "The expression is not valid. A left parenthesis ( '(' ) was found that cannot be matched."
+            )
+        }
+    }
+    display_vec_token(output);
+}
+
 fn parse(expr: &str) -> Expr {
     lazy_static! {
         static ref VARIABLE: Regex = Regex::new("[a-zA-Z_]+").unwrap();
         static ref NUMBER: Regex = Regex::new(r"\d+(.\d*)?(e[+-]?\d+)?").unwrap();
-        static ref UNARY_MINUS: Regex = Regex::new(r"^[\d|e|E]-^[\d]").unwrap();
+        static ref UNARY_MINUS: Regex = Regex::new(r"[^\d|e|E]-[^\d]").unwrap();
     }
     let expr: String = expr.chars().filter(|c| !c.is_whitespace()).collect();
     let expr= &expr[..];
@@ -725,7 +867,6 @@ fn parse(expr: &str) -> Expr {
             }
         }
     } else if let Some(match_) = NUMBER.find(expr) {
-        println!("match {:#?}", match_);
         Constant(f64::from_str(match_.as_str()).unwrap())
     } else if let Some(match_) = VARIABLE.find(expr) {
         Variable(String::from(match_.as_str()))
@@ -741,30 +882,30 @@ fn main() {
     let x = variable("x");
 
     let expr = parse("x*x*x");
-    debug!(expr);
-    debug!(expr.derivative(&x));
-    debug!(expr.derivative(&x).simplify());
+    display!(expr);
+    display!(expr.derivative(&x));
+    display!(expr.derivative(&x).simplify());
 
     let expr = parse("x*x*x");
     println!();
-    debug!(expr);
-    debug!(expr.simplify());
+    display!(expr);
+    display!(expr.simplify());
 
     let expr = parse("1+3*5*x");
     println!();
-    debug!(expr);
-    debug!(expr.simplify());
-    debug!(expr.derivative(&x).simplify());
+    display!(expr);
+    display!(expr.simplify());
+    display!(expr.derivative(&x).simplify());
 
 
     let expr = product!(x.clone(), x.clone(), x.clone(), x.clone());
     println!();
-    debug!(expr);
-    debug!(expr.derivative(&x));
-    debug!(expr.derivative(&x).simplify());
-    debug!(expr.derivative(&x).simplify().group());
-    debug!(expr.derivative(&x).simplify().group().group());
-    debug!(expr.derivative(&x).simplify().group().group().simplify());
+    display!(expr);
+    display!(expr.derivative(&x));
+    display!(expr.derivative(&x).simplify());
+    display!(expr.derivative(&x).simplify().group());
+    display!(expr.derivative(&x).simplify().group().group());
+    display!(expr.derivative(&x).simplify().group().group().simplify());
 
     let expr = product!(product!(product!(x.clone(), x.clone()), x.clone()), x.clone());
     println!();
@@ -786,19 +927,22 @@ fn main() {
     let expr = product!(constant(2.0), parse("x+y"));
     let expanded = expand(expr.clone());
     println!();
-    debug!(expr);
-    debug!(expanded);
+    display!(expr);
+    display!(expanded);
 
     let expr = product!(constant(2.0), parse("x+y"), parse("x+y"));
     let expanded = expr.clone().expand();
     println!();
-    debug!(expr);
-    debug!(expanded);
-    debug!(expanded.simplify());
+    display!(expr);
+    display!(expanded);
+    display!(expanded.simplify());
 
     let expr = unary_expr(Exp, parse("5.1e-1*x*x"));
     println!();
-    debug!(expr);
-    debug!(expr.derivative(&x));
-    debug!(expr.derivative(&x).simplify());
+    display!(expr);
+    display!(expr.derivative(&x));
+    display!(expr.derivative(&x).simplify());
+
+    debug!(shunting_yard("3.4*x*y+z"));
+    debug!(shunting_yard("(5+x+t)*(x+y)*z"));
 }
