@@ -7,7 +7,7 @@ use std::str::FromStr;
 
 use crate::AssociativeOp::{Addition, Multiplication};
 use crate::Expr::{AssociativeExpr, Constant, Power, UnaryExpr, Variable};
-use crate::UnaryOp::{Minus, Exp};
+use crate::UnaryOp::{Exp, Minus};
 
 macro_rules! display {
     ($e:expr) => {
@@ -41,18 +41,9 @@ extern crate lazy_static;
 enum Expr {
     Variable(String),
     Constant(f64),
-    UnaryExpr {
-        op: UnaryOp,
-        a: Box<Expr>,
-    },
-    AssociativeExpr {
-        op: AssociativeOp,
-        args: Vec<Expr>,
-    },
-    Power {
-        base: Box<Expr>,
-        exp: Box<Expr>,
-    },
+    UnaryExpr { op: UnaryOp, a: Box<Expr> },
+    AssociativeExpr { op: AssociativeOp, args: Vec<Expr> },
+    Power { base: Box<Expr>, exp: Box<Expr> },
 }
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Ord, PartialOrd)]
@@ -187,7 +178,7 @@ impl std::fmt::Display for UnaryOp {
             "{}",
             match self {
                 Minus => "-",
-                Exp => "exp"
+                Exp => "exp",
             }
         )
     }
@@ -211,11 +202,9 @@ impl std::fmt::Display for Expr {
         match self {
             Variable(name) => write!(f, "{}", name),
             Constant(c) => write!(f, "{}", c),
-            UnaryExpr { op, a } => {
-                match op {
-                    Minus => write!(f, "- ({})", a),
-                    _ => write!(f, "{}({})", op, a),
-                }
+            UnaryExpr { op, a } => match op {
+                Minus => write!(f, "- ({})", a),
+                _ => write!(f, "{}({})", op, a),
             },
             AssociativeExpr { op, args } => match op {
                 Addition => {
@@ -315,7 +304,7 @@ fn expandable(expr: Box<Expr>) -> bool {
 }
 
 impl Clone for Expr {
-        fn clone(&self) -> Self {
+    fn clone(&self) -> Self {
         match *self {
             Variable(ref name) => Variable(name.clone()),
             Constant(c) => Constant(c),
@@ -389,7 +378,6 @@ fn expand(expr: Expr) -> Expr {
 }
 
 impl Expr {
-
     fn expand(self) -> Expr {
         if let AssociativeExpr { ref op, ref args } = self {
             if op == &Multiplication {
@@ -518,7 +506,11 @@ impl Expr {
                             if **base == *x {
                                 product!(constant(n), power((**base).clone(), constant(n - 1.0)))
                             } else {
-                                product!(constant(n), power((**base).clone(), constant(n - 1.0)), (**base).derivative(&x))
+                                product!(
+                                    constant(n),
+                                    power((**base).clone(), constant(n - 1.0)),
+                                    (**base).derivative(&x)
+                                )
                             }
                         }
                     }
@@ -536,7 +528,7 @@ impl Expr {
                 associative_expr(*op, args.iter().map(|e| e.simplify()).collect())
             }
             UnaryExpr { op, a } => unary_expr(*op, a.simplify()),
-            Power{base, exp} => power(base.simplify(),exp.simplify()),
+            Power { base, exp } => power(base.simplify(), exp.simplify()),
             _ => self.clone(),
         }
     }
@@ -569,19 +561,25 @@ impl Expr {
                         let times = Constant((k - i) as f64);
                         grouped.push(match op {
                             Addition => match repeated {
-                                AssociativeExpr { op:repeated_op, args: ref repeated_args} => {
+                                AssociativeExpr {
+                                    op: repeated_op,
+                                    args: ref repeated_args,
+                                } => {
                                     // if the repeated expression is a multiplication,
                                     // we just insert repeated into repeated_args
                                     if repeated_op == Multiplication {
-                                        let mut repeated_args= repeated_args.clone();
+                                        let mut repeated_args = repeated_args.clone();
                                         repeated_args.insert(0, times);
-                                        AssociativeExpr {op: Multiplication, args: repeated_args}
+                                        AssociativeExpr {
+                                            op: Multiplication,
+                                            args: repeated_args,
+                                        }
                                     } else {
                                         product!(times, repeated)
                                     }
                                 }
-                                _ => product!(times, repeated)
-                            }
+                                _ => product!(times, repeated),
+                            },
                             Multiplication => power(repeated, times),
                         });
                     }
@@ -615,7 +613,7 @@ impl Expr {
                                     for child_arg in child_args {
                                         count += match *child_arg {
                                             Constant(_) => 0,
-                                            _ => 1
+                                            _ => 1,
                                         }
                                     }
                                 }
@@ -697,9 +695,9 @@ enum TokenType {
     AdditionT,
     RParen,
     LParen,
-    None
+    None,
 }
-use crate::TokenType::{ConstantT, VariableT, MultiplicationT, AdditionT, RParen, LParen};
+use crate::TokenType::{AdditionT, ConstantT, LParen, MultiplicationT, RParen, VariableT};
 
 #[derive(Debug, PartialEq, Eq, Ord, PartialOrd)]
 struct Token<'e>(TokenType, &'e str);
@@ -711,19 +709,23 @@ impl std::fmt::Display for Token<'_> {
     }
 }
 
-fn display_vec_token(vec_token: Vec<Token<'_>>) {
-    let arg_strings = vec_token.iter().map(|e| e.to_string()).collect::<Vec<String>>();
+fn display_vec_token(vec_token: &Vec<Token<'_>>) {
+    let arg_strings = vec_token
+        .iter()
+        .map(|e| e.to_string())
+        .collect::<Vec<String>>();
     println!("[{}]", &arg_strings[..].join(", "))
 }
 
-fn shunting_yard(expr: &str) {
+fn shunting_yard(expr: &str) -> Expr {
+    let original_expr = expr;
     lazy_static! {
-        static ref STARTS_WITH_NUMBER: Regex = Regex::new(r"^\d+(.\d*)?(e[+-]?\d+)?").unwrap();
+        static ref STARTS_WITH_NUMBER: Regex = get_float_regex();
         static ref STARTS_WITH_OPERATOR: Regex = Regex::new(r"^[\+\*-/]").unwrap();
         static ref STARTS_WITH_VARIABLE: Regex = Regex::new("^[a-zA-Z_]+").unwrap();
     }
     let expr: String = expr.chars().filter(|c| !c.is_whitespace()).collect();
-    let mut expr= &expr[..];
+    let mut expr = &expr[..];
     let mut output = Vec::with_capacity(expr.len());
     // In a valid expression, the number of operators is less than half the number of characters
     // Proof:
@@ -749,7 +751,7 @@ fn shunting_yard(expr: &str) {
             token_type = match token {
                 "*" => MultiplicationT,
                 "+" => AdditionT,
-                _ => panic!("unsupported token: {}", token)
+                _ => panic!("unsupported token: {}", token),
             };
             expr = &expr[match_.end()..];
         } else if let Some(match_) = STARTS_WITH_VARIABLE.find(expr) {
@@ -757,11 +759,11 @@ fn shunting_yard(expr: &str) {
             token = match_.as_str();
             expr = &expr[match_.end()..];
         } else if expr.starts_with('(') {
-            token_type = TokenType::LParen;
+            token_type = LParen;
             token = "(";
             expr = &expr[1..];
         } else if expr.starts_with(')') {
-            token_type = TokenType::RParen;
+            token_type = RParen;
             token = ")";
             expr = &expr[1..];
         }
@@ -773,7 +775,7 @@ fn shunting_yard(expr: &str) {
                     if *token_type != LParen {
                         output.push(operators.pop().unwrap());
                     } else {
-                        break
+                        break;
                     }
                 }
                 operators.push(Token(AdditionT, token))
@@ -783,7 +785,7 @@ fn shunting_yard(expr: &str) {
                     if *token_type == MultiplicationT {
                         output.push(operators.pop().unwrap());
                     } else {
-                        break
+                        break;
                     }
                 }
                 operators.push(Token(MultiplicationT, token))
@@ -797,19 +799,23 @@ fn shunting_yard(expr: &str) {
                     } else {
                         operators.pop();
                         found_matching_lparen = true;
-                        break
+                        break;
                     }
                 }
                 if !found_matching_lparen {
                     panic!(
-                        "The expression is not valid. The right parenthesis before {} cannot be matched"
-                        , expr);
+                        "The expression is not valid. \
+                            The right parenthesis before {} in {} can not be matched",
+                        expr, original_expr
+                    );
                 }
-
             }
             TokenType::None => {
-                panic!("The expression is not valid. No operator, variable, or constant found at {}",
-                       expr);
+                panic!(
+                    "The expression is not valid. \
+                        No operator, variable, or constant found at {}",
+                    expr
+                );
             }
         }
     }
@@ -822,17 +828,67 @@ fn shunting_yard(expr: &str) {
             )
         }
     }
-    display_vec_token(output);
+    let mut stack = Vec::with_capacity(output.len());
+    for i in 0..output.len() {
+        let Token(token_type, token) = &output[i];
+        match *token_type {
+            ConstantT => {
+                if let Ok(c) = f64::from_str(token) {
+                    stack.push(Constant(c));
+                } else {
+                    println!("cannot parse float from '{}'", token);
+                    panic!();
+                }
+            }
+            VariableT => stack.push(variable(token.clone())),
+            MultiplicationT => {
+                let op1 = stack.pop().unwrap();
+                let op2 = stack.pop().unwrap();
+                stack.push(product!(op2, op1));
+            }
+            AdditionT => {
+                let op1 = stack.pop().unwrap();
+                let op2 = stack.pop().unwrap();
+                stack.push(sum!(op2, op1));
+            }
+            LParen | RParen | TokenType::None => {}
+        }
+    }
+    stack[0].clone()
+}
+
+/// ```
+/// assert!(false)
+/// ```
+//     debug!(regex.find("+3.3e3+   ").unwrap().as_str());
+//     debug!(regex.find("3.3e+3+   ").unwrap().as_str());
+//     debug!(regex.find("+3.3e+3+   ").unwrap().as_str());
+//     debug!(regex.find(".3e3+    ").unwrap().as_str());
+//     debug!(regex.find("3e3+     ").unwrap().as_str());
+//     debug!(regex.find("3.3+     ").unwrap().as_str());
+//     debug!(regex.find(".3+      ").unwrap().as_str());
+//     debug!(regex.find("3+       ").unwrap().as_str());
+
+fn get_float_regex() -> Regex {
+    let regex = "\
+         ^ [\\+-]? \\d+\\.\\d* [Ee] [\\+-]? \\d+ \
+        |^ [\\+-]? \\.\\d+     [Ee] [\\+-]? \\d+ \
+        |^ [\\+-]? \\d+        [Ee] [\\+-]? \\d+ \
+        |^ [\\+-]? \\d+\\.\\d*                   \
+        |^ [\\+-]? \\.\\d+                       \
+        |^ [\\+-]? \\d+                          ";
+    let regex: String = regex.chars().filter(|c| !c.is_whitespace()).collect();
+    Regex::new(&regex).unwrap()
 }
 
 fn parse(expr: &str) -> Expr {
     lazy_static! {
         static ref VARIABLE: Regex = Regex::new("[a-zA-Z_]+").unwrap();
-        static ref NUMBER: Regex = Regex::new(r"\d+(.\d*)?(e[+-]?\d+)?").unwrap();
+        static ref NUMBER: Regex = get_float_regex();
         static ref UNARY_MINUS: Regex = Regex::new(r"[^\d|e|E]-[^\d]").unwrap();
     }
     let expr: String = expr.chars().filter(|c| !c.is_whitespace()).collect();
-    let expr= &expr[..];
+    let expr = &expr[..];
     if let Some(i) = expr.find('+') {
         let str_before = expr[..i].trim();
         let str_after = expr[i + 1..].trim();
@@ -844,7 +900,7 @@ fn parse(expr: &str) -> Expr {
                 args: vec![parse(str_before), parse(str_after)],
             }
         }
-    } else if let Some(match_) = UNARY_MINUS.find(expr)  {
+    } else if let Some(match_) = UNARY_MINUS.find(expr) {
         let str_before = expr[..match_.start()].trim();
         let str_after = expr[match_.start() + 1..].trim();
         if str_before.len() == 0 || str_after.len() == 0 {
@@ -897,7 +953,6 @@ fn main() {
     display!(expr.simplify());
     display!(expr.derivative(&x).simplify());
 
-
     let expr = product!(x.clone(), x.clone(), x.clone(), x.clone());
     println!();
     display!(expr);
@@ -907,7 +962,10 @@ fn main() {
     display!(expr.derivative(&x).simplify().group().group());
     display!(expr.derivative(&x).simplify().group().group().simplify());
 
-    let expr = product!(product!(product!(x.clone(), x.clone()), x.clone()), x.clone());
+    let expr = product!(
+        product!(product!(x.clone(), x.clone()), x.clone()),
+        x.clone()
+    );
     println!();
     println!("{}", expr);
     println!("{}", expr.derivative(&x));
@@ -943,6 +1001,7 @@ fn main() {
     display!(expr.derivative(&x));
     display!(expr.derivative(&x).simplify());
 
-    debug!(shunting_yard("3.4*x*y+z"));
-    debug!(shunting_yard("(5+x+t)*(x+y)*z"));
+    display!(shunting_yard("3.4*x*y+z"));
+    display!(shunting_yard("(5+x+t)*(x+y)*z"));
+    display!(shunting_yard("((x+y)*(x+y)+x)*(x+y)"));
 }
