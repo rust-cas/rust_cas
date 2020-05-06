@@ -347,13 +347,13 @@ impl Clone for Expr {
 }
 
 impl Expr {
-    #[allow(dead_code)]
-    fn expandable(&self) -> bool {
+
+    fn is_expandable(&self) -> bool {
         match *self {
             AssociativeExpr { ref op, ref args } => {
                 op == &Multiplication && args.iter().any(|arg| arg.is_addition())
             }
-            Power { ref base, .. } => base.is_addition() || base.expandable(),
+            //Power { ref base, .. } => base.is_addition() || base.is_expandable(),
             _ => false,
         }
     }
@@ -362,12 +362,15 @@ impl Expr {
         match self {
             AssociativeExpr { op, args } => AssociativeExpr {
                 op,
-                args: args.iter().map(|e| e.clone().expand()).collect(),
+                args: args.iter().map(|e| {
+                    e.clone().full_expand()
+                }).collect(),
             },
             _ => self,
         }
     }
 
+    #[allow(dead_code)]
     fn full_expand_clone(&self) -> Expr {
         self.clone().full_expand()
     }
@@ -380,6 +383,9 @@ impl Expr {
     fn expand(self) -> Expr {
         if let AssociativeExpr { ref op, ref args } = self {
             if *op == Multiplication {
+                if ! self.is_expandable() {
+                    return self
+                }
                 let unexpandable_factors: Vec<&Expr> =
                     args.iter().filter(|arg| !arg.is_addition()).collect();
                 let expanded_args = args
@@ -475,6 +481,7 @@ impl Expr {
                 },
                 AssociativeExpr { op, args } => match op {
                     Addition => {
+                        // todo filter out constants
                         associative_expr(Addition, args.iter().map(|e| e.derivative(&x)).collect())
                     }
                     Multiplication => {
@@ -965,7 +972,7 @@ fn main() {
     println!("{}", expr);
     println!("{}", expr.derivative(&x));
     println!("{}", expr.derivative(&x).simplify());
-    debug!(expr.derivative(&x).simplify().full_expand_clone());
+    display!(expr.derivative(&x).simplify().full_expand().full_expand().simplify().simplify());
 
     println!();
     println!("{}", expr.simplify());
@@ -1001,4 +1008,8 @@ fn main() {
     debug!(shunting_yard("(5+x+t)*(x+y)*z"));
     debug!(shunting_yard("((x+y)*(x+y)+x)*(x+y)"));
     display!(multi_nom_coeff(&vec![2, 2]));
+
+    display!(shunting_yard("x*(x+x) + y"));
+    display!(shunting_yard("(x + x)*x + x*x").full_expand());
+    display!(shunting_yard("x*x").expand());
 }
