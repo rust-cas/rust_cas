@@ -74,7 +74,7 @@ impl PartialEq for Expr {
                 UnaryExpr {
                     op: other_op,
                     a: other_a,
-                } => op == other_op && a.simplify() == other_a.simplify(),
+                } => op == other_op && a == other_a,
                 _ => false,
             },
             AssociativeExpr { op, args } => match other_simplified {
@@ -535,7 +535,16 @@ impl Expr {
         }
     }
 
-    fn group(&self) -> Expr {
+    fn group(self) -> Expr {
+        let grouped = self.clone().group_once();
+        if  grouped != self {
+            grouped.group()
+        } else {
+            grouped
+        }
+    }
+
+    fn group_once(self) -> Expr {
         // group equal expressions
         // for example, turn x+x into 2*x, or x*x into x^2
         match self {
@@ -588,10 +597,10 @@ impl Expr {
                 }
                 match grouped.len() {
                     1 => grouped[0].clone(),
-                    _ => associative_expr(*op, grouped),
+                    _ => associative_expr(op, grouped),
                 }
             }
-            _ => self.clone(),
+            _ => self
         }
     }
 
@@ -972,7 +981,7 @@ fn main() {
     println!("{}", expr);
     println!("{}", expr.derivative(&x));
     println!("{}", expr.derivative(&x).simplify());
-    display!(expr.derivative(&x).simplify().full_expand().full_expand().simplify().simplify());
+    display!(expr.derivative(&x).simplify().full_expand().full_expand().simplify().group());
 
     println!();
     println!("{}", expr.simplify());
