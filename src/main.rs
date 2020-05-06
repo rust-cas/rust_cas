@@ -3,6 +3,7 @@ use regex::Regex;
 
 use std::cmp::Ordering;
 use std::fmt::Formatter;
+use std::fmt::Write;
 use std::str::FromStr;
 
 use crate::AssociativeOp::{Addition, Multiplication};
@@ -27,7 +28,6 @@ macro_rules! product {
     };
 }
 
-#[allow(unused_macros)]
 macro_rules! sum  {
     ( $( $x:expr ),* ) => {
         AssociativeExpr{op: Addition, args: vec![ $($x,)* ]}
@@ -37,7 +37,6 @@ macro_rules! sum  {
 #[macro_use]
 extern crate lazy_static;
 
-#[derive(Debug)]
 enum Expr {
     Variable(String),
     Constant(f64),
@@ -197,6 +196,37 @@ impl std::fmt::Display for AssociativeOp {
     }
 }
 
+impl std::fmt::Debug for Expr {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Variable(name) => write!(f, "{}", name),
+            Constant(c) => write!(f, "{}", c),
+            UnaryExpr { op, a } => match op {
+                Minus => write!(f, "- ({:?})", a),
+                _ => write!(f, "{}({:?})", op, a),
+            },
+            AssociativeExpr { op, args } => {
+                let arg_strings = args.iter().map(|e| {
+                    let mut s = String::new();
+                    write!(s, "{:?}", e).unwrap();
+                    s
+                }).collect::<Vec<String>>();
+                match op {
+                    Addition => {
+                        write!(f, "sum({:})", &arg_strings[..].join(", "))
+                    }
+                    Multiplication => {
+                        write!(f, "prod({:})", &arg_strings[..].join(", "))
+                    }
+                }
+            },
+            Power { base, exp } => {
+                write!(f, "({:?})^({:?})", base, exp)
+            }
+        }
+    }
+}
+
 impl std::fmt::Display for Expr {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         match self {
@@ -283,24 +313,16 @@ fn power(base: Expr, exp: Expr) -> Expr {
     }
 }
 
-#[allow(dead_code)]
-fn expandable(expr: Box<Expr>) -> bool {
-    if let AssociativeExpr { ref op, ref args } = *expr {
-        op == &Multiplication
-            && args.iter().any(|arg| {
-                if let AssociativeExpr {
-                    op: ref child_op,
-                    args: _,
-                } = *arg
-                {
-                    *child_op == Addition
-                } else {
-                    false
-                }
-            })
-    } else {
-        false
+fn factorial(n: u64) -> u64 {
+    (1..=n).product()
+}
+
+fn multi_nom_coeff(v: &Vec<i32>) -> u64 {
+    let mut result = factorial(v.iter().sum::<i32>() as u64);
+    for e in v {
+        result /= factorial(*e as u64);
     }
+    result
 }
 
 impl Clone for Expr {
@@ -324,77 +346,42 @@ impl Clone for Expr {
     }
 }
 
-fn expand(expr: Expr) -> Expr {
-    if let AssociativeExpr { ref op, ref args } = expr {
-        if op == &Multiplication {
-            let unexpandable: Vec<&Expr> = args
-                .iter()
-                .filter(|arg| {
-                    if let AssociativeExpr {
-                        op: ref child_op,
-                        args: _,
-                    } = **arg
-                    {
-                        *child_op == Multiplication
-                    } else {
-                        true
-                    }
-                })
-                .collect();
-            let expanded_args = args
-                .iter()
-                .filter_map(|arg| {
-                    if let AssociativeExpr {
-                        op: ref child_op,
-                        args: ref child_args,
-                    } = arg
-                    {
-                        if *child_op == Addition {
-                            Some(child_args.clone())
-                        } else {
-                            None
-                        }
-                    } else {
-                        None
-                    }
-                })
-                .multi_cartesian_product();
-            let expanded_args = expanded_args
-                .map(|mut e: Vec<Expr>| {
-                    e.reserve(unexpandable.len());
-                    for expr in &unexpandable {
-                        e.push((**expr).clone())
-                    }
-                    associative_expr(Multiplication, e)
-                })
-                .collect();
-            associative_expr(Addition, expanded_args)
-        } else {
-            expr
-        }
-    } else {
-        expr
-    }
-}
-
 impl Expr {
+    #[allow(dead_code)]
+    fn expandable(&self) -> bool {
+        match *self {
+            AssociativeExpr { ref op, ref args } => {
+                op == &Multiplication && args.iter().any(|arg| arg.is_addition())
+            }
+            Power { ref base, .. } => base.is_addition() || base.expandable(),
+            _ => false,
+        }
+    }
+
+    fn expand_leaves(self) -> Expr {
+        match self {
+            AssociativeExpr { op, args } => AssociativeExpr {
+                op,
+                args: args.iter().map(|e| e.clone().expand()).collect(),
+            },
+            _ => self,
+        }
+    }
+
+    fn full_expand_clone(&self) -> Expr {
+        self.clone().full_expand()
+    }
+
+    fn full_expand(self) -> Expr {
+        let expr = self.expand_leaves();
+        expr.expand()
+    }
+
     fn expand(self) -> Expr {
         if let AssociativeExpr { ref op, ref args } = self {
-            if op == &Multiplication {
-                let unexpandable: Vec<&Expr> = args
-                    .iter()
-                    .filter(|arg| {
-                        if let AssociativeExpr {
-                            op: ref child_op,
-                            args: _,
-                        } = **arg
-                        {
-                            *child_op == Multiplication
-                        } else {
-                            true
-                        }
-                    })
-                    .collect();
+            if *op == Multiplication {
+                let unexpandable_factors: Vec<&Expr> =
+                    args.iter().filter(|arg| !arg.is_addition()).collect();
                 let expanded_args = args
                     .iter()
                     .filter_map(|arg| {
@@ -415,8 +402,8 @@ impl Expr {
                     .multi_cartesian_product();
                 let expanded_args = expanded_args
                     .map(|mut e: Vec<Expr>| {
-                        e.reserve(unexpandable.len());
-                        for expr in &unexpandable {
+                        e.reserve(unexpandable_factors.len());
+                        for expr in &unexpandable_factors {
                             e.push((**expr).clone())
                         }
                         associative_expr(Multiplication, e)
@@ -428,6 +415,14 @@ impl Expr {
             }
         } else {
             self
+        }
+    }
+
+    fn is_addition(&self) -> bool {
+        if let AssociativeExpr { ref op, .. } = *self {
+            *op == Addition
+        } else {
+            false
         }
     }
 
@@ -533,7 +528,6 @@ impl Expr {
         }
     }
 
-    #[allow(dead_code)]
     fn group(&self) -> Expr {
         // group equal expressions
         // for example, turn x+x into 2*x, or x*x into x^2
@@ -709,6 +703,7 @@ impl std::fmt::Display for Token<'_> {
     }
 }
 
+#[allow(dead_code)]
 fn display_vec_token(vec_token: &Vec<Token<'_>>) {
     let arg_strings = vec_token
         .iter()
@@ -970,6 +965,7 @@ fn main() {
     println!("{}", expr);
     println!("{}", expr.derivative(&x));
     println!("{}", expr.derivative(&x).simplify());
+    debug!(expr.derivative(&x).simplify().full_expand_clone());
 
     println!();
     println!("{}", expr.simplify());
@@ -983,7 +979,7 @@ fn main() {
     println!("{}", expr.derivative(&x).simplify());
 
     let expr = product!(constant(2.0), parse("x+y"));
-    let expanded = expand(expr.clone());
+    let expanded = expr.clone().expand();
     println!();
     display!(expr);
     display!(expanded);
@@ -1001,7 +997,8 @@ fn main() {
     display!(expr.derivative(&x));
     display!(expr.derivative(&x).simplify());
 
-    display!(shunting_yard("3.4*x*y+z"));
-    display!(shunting_yard("(5+x+t)*(x+y)*z"));
-    display!(shunting_yard("((x+y)*(x+y)+x)*(x+y)"));
+    debug!(shunting_yard("3.4*x*y+z"));
+    debug!(shunting_yard("(5+x+t)*(x+y)*z"));
+    debug!(shunting_yard("((x+y)*(x+y)+x)*(x+y)"));
+    display!(multi_nom_coeff(&vec![2, 2]));
 }
