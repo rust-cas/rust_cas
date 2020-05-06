@@ -45,13 +45,13 @@ enum Expr {
     Power { base: Box<Expr>, exp: Box<Expr> },
 }
 
-#[derive(Copy, Clone, Debug, PartialEq, Eq, Ord, PartialOrd)]
+#[derive(Copy, Debug, PartialEq, Eq, Ord, PartialOrd)]
 enum UnaryOp {
     Minus,
     Exp,
 }
 
-#[derive(Copy, Clone, Debug, PartialEq, Eq, Ord, PartialOrd)]
+#[derive(Copy, Debug, PartialEq, Eq, Ord, PartialOrd)]
 enum AssociativeOp {
     Addition,
     Multiplication,
@@ -206,23 +206,20 @@ impl std::fmt::Debug for Expr {
                 _ => write!(f, "{}({:?})", op, a),
             },
             AssociativeExpr { op, args } => {
-                let arg_strings = args.iter().map(|e| {
-                    let mut s = String::new();
-                    write!(s, "{:?}", e).unwrap();
-                    s
-                }).collect::<Vec<String>>();
+                let arg_strings = args
+                    .iter()
+                    .map(|e| {
+                        let mut s = String::new();
+                        write!(s, "{:?}", e).unwrap();
+                        s
+                    })
+                    .collect::<Vec<String>>();
                 match op {
-                    Addition => {
-                        write!(f, "sum({:})", &arg_strings[..].join(", "))
-                    }
-                    Multiplication => {
-                        write!(f, "prod({:})", &arg_strings[..].join(", "))
-                    }
+                    Addition => write!(f, "sum({:})", &arg_strings[..].join(", ")),
+                    Multiplication => write!(f, "prod({:})", &arg_strings[..].join(", ")),
                 }
-            },
-            Power { base, exp } => {
-                write!(f, "({:?})^({:?})", base, exp)
             }
+            Power { base, exp } => write!(f, "({:?})^({:?})", base, exp),
         }
     }
 }
@@ -347,7 +344,6 @@ impl Clone for Expr {
 }
 
 impl Expr {
-
     fn is_expandable(&self) -> bool {
         match *self {
             AssociativeExpr { ref op, ref args } => {
@@ -362,9 +358,7 @@ impl Expr {
         match self {
             AssociativeExpr { op, args } => AssociativeExpr {
                 op,
-                args: args.iter().map(|e| {
-                    e.clone().full_expand()
-                }).collect(),
+                args: args.iter().map(|e| e.clone().full_expand()).collect(),
             },
             _ => self,
         }
@@ -383,8 +377,8 @@ impl Expr {
     fn expand(self) -> Expr {
         if let AssociativeExpr { ref op, ref args } = self {
             if *op == Multiplication {
-                if ! self.is_expandable() {
-                    return self
+                if !self.is_expandable() {
+                    return self;
                 }
                 let unexpandable_factors: Vec<&Expr> =
                     args.iter().filter(|arg| !arg.is_addition()).collect();
@@ -537,7 +531,7 @@ impl Expr {
 
     fn group(self) -> Expr {
         let grouped = self.clone().group_once();
-        if  grouped != self {
+        if grouped != self {
             grouped.group()
         } else {
             grouped
@@ -600,7 +594,7 @@ impl Expr {
                     _ => associative_expr(op, grouped),
                 }
             }
-            _ => self
+            _ => self,
         }
     }
 
@@ -697,30 +691,44 @@ impl Expr {
     }
 }
 
-#[derive(Debug, PartialEq, Eq, Ord, PartialOrd)]
-enum TokenType {
-    ConstantT,
-    VariableT,
-    MultiplicationT,
-    AdditionT,
-    RParen,
+#[derive(Debug, Eq, PartialEq)]
+enum Token {
+    Constant(Number),
+    Variable(String),
+    Multiplication,
+    Addition,
     LParen,
-    None,
+    RParen,
 }
-use crate::TokenType::{AdditionT, ConstantT, LParen, MultiplicationT, RParen, VariableT};
 
-#[derive(Debug, PartialEq, Eq, Ord, PartialOrd)]
-struct Token<'e>(TokenType, &'e str);
+#[derive(Debug)]
+struct Number(f64); // we define this so that we can derive PartialEq for Token
+// in effect, we assert here that the contents of Number is not NaN.
 
-impl std::fmt::Display for Token<'_> {
-    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-        let Token(_, token) = self;
-        write!(f, "{}", token)
+impl std::cmp::PartialEq for Number {
+    fn eq(&self, other: &Self) -> bool {
+        self == other
     }
 }
 
+impl std::cmp::Eq for Number {}
+
+impl std::fmt::Display for Token {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Token::Constant(Number(c)) => write!(f, "{}", c),
+            Token::Variable(name) => write!(f, "{}", name),
+            Token::Multiplication => write!(f, "*"),
+            Token::Addition => write!(f, "+"),
+            Token::RParen => write!(f, "("),
+            Token::LParen => write!(f, ")"),
+        }
+    }
+}
+
+
 #[allow(dead_code)]
-fn display_vec_token(vec_token: &Vec<Token<'_>>) {
+fn display_vec_token(vec_token: &Vec<Token>) {
     let arg_strings = vec_token
         .iter()
         .map(|e| e.to_string())
@@ -753,61 +761,58 @@ fn parse(expr: &str) -> Expr {
     // than one half, even if operators other than +,-,*,/ are used.
     let mut operators = Vec::with_capacity(expr.len() / 2);
     while expr != "" {
-        let mut token_type = TokenType::None;
-        let mut token = "";
-        if let Some(match_) = STARTS_WITH_NUMBER.find(expr) {
-            token_type = ConstantT;
-            token = match_.as_str();
+        let token = if let Some(match_) = STARTS_WITH_NUMBER.find(expr) {
             expr = &expr[match_.end()..];
+            Token::Constant(Number(f64::from_str(match_.as_str()).unwrap()))
         } else if let Some(match_) = STARTS_WITH_OPERATOR.find(expr) {
-            token = match_.as_str();
-            token_type = match token {
-                "*" => MultiplicationT,
-                "+" => AdditionT,
-                _ => panic!("unsupported token: {}", token),
-            };
             expr = &expr[match_.end()..];
+            match match_.as_str() {
+                "*" => Token::Multiplication,
+                "+" => Token::Addition,
+                _ => panic!("unsupported token: {}", match_.as_str()),
+            }
         } else if let Some(match_) = STARTS_WITH_VARIABLE.find(expr) {
-            token_type = VariableT;
-            token = match_.as_str();
             expr = &expr[match_.end()..];
+            Token::Variable(match_.as_str().to_string())
         } else if expr.starts_with('(') {
-            token_type = LParen;
-            token = "(";
             expr = &expr[1..];
+            Token::LParen
         } else if expr.starts_with(')') {
-            token_type = RParen;
-            token = ")";
             expr = &expr[1..];
-        }
-        match token_type {
-            ConstantT => output.push(Token(ConstantT, token)),
-            VariableT => output.push(Token(VariableT, token)),
-            AdditionT => {
-                while let Some(Token(token_type, _)) = operators.last() {
-                    if *token_type != LParen {
+            Token::RParen
+        } else {
+            panic!(
+                "The expression is not valid. No operator, variable, or constant found at {}",
+                expr
+            );
+        };
+        match token {
+            Token::Constant(_) | Token::Variable(_) => output.push(token),
+            Token::Addition => {
+                while let Some(token) = operators.last() {
+                    if *token != Token::LParen {
                         output.push(operators.pop().unwrap());
                     } else {
                         break;
                     }
                 }
-                operators.push(Token(AdditionT, token))
+                operators.push(Token::Addition);
             }
-            MultiplicationT => {
-                while let Some(Token(token_type, _)) = operators.last() {
-                    if *token_type == MultiplicationT {
+            Token::Multiplication => {
+                while let Some(token) = operators.last() {
+                    if *token == Token::Multiplication {
                         output.push(operators.pop().unwrap());
                     } else {
                         break;
                     }
                 }
-                operators.push(Token(MultiplicationT, token))
+                operators.push(Token::Multiplication)
             }
-            LParen => operators.push(Token(LParen, token)),
-            RParen => {
+            Token::LParen => operators.push(token),
+            Token::RParen => {
                 let mut found_matching_lparen = false;
-                while let Some(Token(token_type, _)) = operators.last() {
-                    if *token_type != LParen {
+                while let Some(token) = operators.last() {
+                    if *token != Token::LParen {
                         output.push(operators.pop().unwrap())
                     } else {
                         operators.pop();
@@ -823,17 +828,10 @@ fn parse(expr: &str) -> Expr {
                     );
                 }
             }
-            TokenType::None => {
-                panic!(
-                    "The expression is not valid. \
-                        No operator, variable, or constant found at {}",
-                    expr
-                );
-            }
         }
     }
-    while let Some(Token(token_type, _)) = operators.last() {
-        if *token_type != LParen {
+    while let Some(token) = operators.last() {
+        if *token != Token::LParen {
             output.push(operators.pop().unwrap())
         } else {
             panic!(
@@ -843,29 +841,21 @@ fn parse(expr: &str) -> Expr {
         }
     }
     let mut stack = Vec::with_capacity(output.len());
-    for i in 0..output.len() {
-        let Token(token_type, token) = &output[i];
-        match *token_type {
-            ConstantT => {
-                if let Ok(c) = f64::from_str(token) {
-                    stack.push(Constant(c));
-                } else {
-                    println!("cannot parse float from '{}'", token);
-                    panic!();
-                }
-            }
-            VariableT => stack.push(variable(token.clone())),
-            MultiplicationT => {
+    for token in output {
+        match token {
+            Token::Constant(Number(c)) => stack.push(Constant(c)),
+            Token::Variable(name) => stack.push(Variable(name)),
+            Token::Multiplication => {
                 let op1 = stack.pop().unwrap();
                 let op2 = stack.pop().unwrap();
                 stack.push(product!(op2, op1));
             }
-            AdditionT => {
+            Token::Addition => {
                 let op1 = stack.pop().unwrap();
                 let op2 = stack.pop().unwrap();
                 stack.push(sum!(op2, op1));
             }
-            LParen | RParen | TokenType::None => {}
+            Token::LParen | Token::RParen => {}
         }
     }
     stack.pop().unwrap()
@@ -891,18 +881,6 @@ fn get_starts_with_float_regex() -> Regex {
         |^ [\\+-]? \\d+\\.\\d*                   \
         |^ [\\+-]? \\.\\d+                       \
         |^ [\\+-]? \\d+                          ";
-    let regex: String = regex.chars().filter(|c| !c.is_whitespace()).collect();
-    Regex::new(&regex).unwrap()
-}
-
-fn get_float_regex() -> Regex {
-    let regex = "\
-          [\\+-]? \\d+\\.\\d* [Ee] [\\+-]? \\d+ \
-        | [\\+-]? \\.\\d+     [Ee] [\\+-]? \\d+ \
-        | [\\+-]? \\d+        [Ee] [\\+-]? \\d+ \
-        | [\\+-]? \\d+\\.\\d*                   \
-        | [\\+-]? \\.\\d+                       \
-        | [\\+-]? \\d+                          ";
     let regex: String = regex.chars().filter(|c| !c.is_whitespace()).collect();
     Regex::new(&regex).unwrap()
 }
@@ -936,7 +914,13 @@ fn main() {
     println!("{}", expr);
     println!("{}", expr.derivative(x));
     println!("{}", expr.derivative(x).simplify());
-    display!(expr.derivative(&x).simplify().full_expand().full_expand().simplify().group());
+    display!(expr
+        .derivative(&x)
+        .simplify()
+        .full_expand()
+        .full_expand()
+        .simplify()
+        .group());
 
     println!();
     println!("{}", expr.simplify());
