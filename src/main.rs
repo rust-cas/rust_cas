@@ -736,30 +736,43 @@ fn parse(expr: &str) -> Expr {
     // than one half, even if operators other than +,-,*,/ are used.
     let mut operators = Vec::with_capacity(expr.len() / 2);
     while expr != "" {
-        let token = if let Some(match_) = STARTS_WITH_NUMBER.find(expr) {
-            expr = &expr[match_.end()..];
-            Token::Constant(Number(f64::from_str(match_.as_str()).unwrap()))
-        } else if let Some(match_) = STARTS_WITH_OPERATOR.find(expr) {
+        let mut option_token: Option<Token> = None;
+        if let Some(match_) = STARTS_WITH_OPERATOR.find(expr) {
             expr = &expr[match_.end()..];
             match match_.as_str() {
-                "*" => Token::Multiplication,
-                "+" => Token::Addition,
+                "*" => option_token = Some(Token::Multiplication),
+                "+" => {
+                    if output.len() > 0 {
+                        // We do not want a unary plus to be parsed as an operator plus
+                        // If output.len() > 0 then a variable or a constant has already been
+                        // parsed. Hence, in this case the plus sign is an operator.
+                        option_token = Some(Token::Addition);
+                    }
+                },
                 _ => panic!("unsupported token: {}", match_.as_str()),
             }
-        } else if let Some(match_) = STARTS_WITH_VARIABLE.find(expr) {
-            expr = &expr[match_.end()..];
-            Token::Variable(match_.as_str().to_string())
-        } else if expr.starts_with('(') {
-            expr = &expr[1..];
-            Token::LParen
-        } else if expr.starts_with(')') {
-            expr = &expr[1..];
-            Token::RParen
+        }
+        let token = if let Some(unwrapped_token) = option_token {
+            unwrapped_token
         } else {
-            panic!(
-                "The expression is not valid. No operator, variable, or constant found at {}",
-                expr
-            );
+            if let Some(match_) = STARTS_WITH_NUMBER.find(expr) {
+                expr = &expr[match_.end()..];
+                Token::Constant(Number(f64::from_str(match_.as_str()).unwrap()))
+            } else if let Some(match_) = STARTS_WITH_VARIABLE.find(expr) {
+                expr = &expr[match_.end()..];
+                Token::Variable(match_.as_str().to_string())
+            } else if expr.starts_with('(') {
+                expr = &expr[1..];
+                Token::LParen
+            } else if expr.starts_with(')') {
+                expr = &expr[1..];
+                Token::RParen
+            } else {
+                panic!(
+                    "The expression is not valid. No operator, variable, or constant found at {}",
+                    expr
+                );
+            }
         };
         match token {
             Token::Constant(_) | Token::Variable(_) => output.push(token),
@@ -929,5 +942,7 @@ fn main() {
 
     display!(parse("x*(x+x) + y"));
     display!(parse("(x + x)*x + x*x").full_expand());
-    display!(parse("x*x").expand());
+
+
+    display!(parse("1+3*5*x"));
 }
