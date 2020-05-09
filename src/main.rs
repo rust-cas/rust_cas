@@ -7,7 +7,7 @@ use std::fmt::Write;
 use std::str::FromStr;
 
 use crate::Expr::{Constant, FuncEval, Power, Product, Sum, Variable};
-use crate::Func::{Exp, Minus};
+use crate::Func::{Exp};
 
 macro_rules! display {
     ($e:expr) => {
@@ -35,7 +35,6 @@ enum Expr {
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Ord, PartialOrd)]
 enum Func {
-    Minus,
     Exp,
 }
 
@@ -153,7 +152,6 @@ impl std::fmt::Display for Func {
             f,
             "{}",
             match self {
-                Minus => "-",
                 Exp => "exp",
             }
         )
@@ -165,10 +163,7 @@ impl std::fmt::Debug for Expr {
         match self {
             Variable(name) => write!(f, "{}", name),
             Constant(c) => write!(f, "{}", c),
-            FuncEval(func, arg) => match func {
-                Minus => write!(f, "- ({:?})", arg),
-                _ => write!(f, "{}({:?})", func, arg),
-            },
+            FuncEval(func, arg) => write!(f, "{}({:?})", func, arg),
             Sum(args) => write!(f, "sum({:})", &debug_args(args)),
             Product(args) => write!(f, "product({:})", &debug_args(args)),
             Power { base, exp } => write!(f, "({:?})^({:?})", base, exp),
@@ -193,10 +188,7 @@ impl std::fmt::Display for Expr {
         match self {
             Variable(name) => write!(f, "{}", name),
             Constant(c) => write!(f, "{}", c),
-            FuncEval(func, arg) => match func {
-                Minus => write!(f, "- ({})", arg),
-                _ => write!(f, "{}({})", func, arg),
-            },
+            FuncEval(func, arg) => write!(f, "{}({})", func, arg),
             Sum(args) => {
                 let arg_strings = args.iter().map(|e| e.to_string()).collect::<Vec<String>>();
                 write!(f, "{}", &arg_strings[..].join(" + "))
@@ -432,7 +424,6 @@ impl Expr {
                 }
                 Constant(_) => constant(0.0),
                 FuncEval(func, arg) => match func {
-                    Minus => FuncEval(Minus, Box::new(arg.derivative(x))),
                     Exp => {
                         if **arg == *x {
                             self.clone()
