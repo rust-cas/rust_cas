@@ -6,8 +6,8 @@ use std::fmt::Formatter;
 use std::fmt::Write;
 use std::str::FromStr;
 
-use crate::Expr::{Constant, FuncEval, Power, Product, Sum, Variable};
-use crate::Func::Exp;
+use crate::Expr::{Constant, Function, Power, Product, Sum, Variable};
+use crate::FuncName::Exp;
 
 macro_rules! display {
     ($e:expr) => {
@@ -27,14 +27,14 @@ extern crate lazy_static;
 enum Expr {
     Variable(String),
     Constant(f64),
-    FuncEval(Func, Box<Expr>),
+    Function(FuncName, Box<Expr>),
     Sum(Vec<Expr>),
     Product(Vec<Expr>),
     Power { base: Box<Expr>, exp: Box<Expr> },
 }
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Ord, PartialOrd)]
-enum Func {
+enum FuncName {
     Exp,
 }
 
@@ -52,8 +52,8 @@ impl PartialEq for Expr {
                 Constant(other_c) => c == other_c,
                 _ => false,
             },
-            FuncEval(func, arg) => match other_simplified {
-                FuncEval(other_func, other_arg) => func == other_func && arg == other_arg,
+            Function(func, arg) => match other_simplified {
+                Function(other_func, other_arg) => func == other_func && arg == other_arg,
                 _ => false,
             },
             Product(args) => match other_simplified {
@@ -101,26 +101,26 @@ impl PartialOrd for Expr {
                 }
                 _ => Ordering::Less,
             },
-            FuncEval(func, arg) => match other {
+            Function(func, arg) => match other {
                 Variable(_) | Constant(_) => Ordering::Greater,
-                FuncEval(other_func, other_arg) => match func.cmp(&other_func) {
+                Function(other_func, other_arg) => match func.cmp(&other_func) {
                     Ordering::Equal => arg.cmp(&other_arg),
                     _ => func.cmp(&other_func),
                 },
                 _ => Ordering::Less,
             },
             Sum(args) => match other {
-                Variable(_) | Constant(_) | FuncEval(_, _) => Ordering::Greater,
+                Variable(_) | Constant(_) | Function(_, _) => Ordering::Greater,
                 Sum(other_args) => sort(args).cmp(&sort(other_args)),
                 _ => Ordering::Less,
             },
             Product(args) => match other {
-                Variable(_) | Constant(_) | FuncEval(_, _) | Sum(_) => Ordering::Greater,
+                Variable(_) | Constant(_) | Function(_, _) | Sum(_) => Ordering::Greater,
                 Product(other_args) => sort(args).cmp(&sort(other_args)),
                 _ => Ordering::Less,
             },
             Power { base, exp } => match other {
-                Variable(_) | Constant(_) | FuncEval(_, _) | Sum(_) | Product(_) => {
+                Variable(_) | Constant(_) | Function(_, _) | Sum(_) | Product(_) => {
                     Ordering::Greater
                 }
                 Power {
@@ -146,7 +146,7 @@ impl Ord for Expr {
 
 impl Eq for Expr {}
 
-impl std::fmt::Display for Func {
+impl std::fmt::Display for FuncName {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         write!(
             f,
@@ -163,7 +163,7 @@ impl std::fmt::Debug for Expr {
         match self {
             Variable(name) => write!(f, "{}", name),
             Constant(c) => write!(f, "{}", c),
-            FuncEval(func, arg) => write!(f, "{}({:?})", func, arg),
+            Function(func, arg) => write!(f, "{}({:?})", func, arg),
             Sum(args) => write!(f, "sum({:})", &debug_args(args)),
             Product(args) => write!(f, "product({:})", &debug_args(args)),
             Power { base, exp } => write!(f, "({:?})^({:?})", base, exp),
@@ -188,7 +188,7 @@ impl std::fmt::Display for Expr {
         match self {
             Variable(name) => write!(f, "{}", name),
             Constant(c) => write!(f, "{}", c),
-            FuncEval(func, arg) => write!(f, "{}({})", func, arg),
+            Function(func, arg) => write!(f, "{}({})", func, arg),
             Sum(args) => {
                 let arg_strings = args.iter().map(|e| e.to_string()).collect::<Vec<String>>();
                 write!(f, "{}", &arg_strings[..].join(" + "))
@@ -197,7 +197,7 @@ impl std::fmt::Display for Expr {
                 let arg_strings = args
                     .iter()
                     .map(|e| match *e {
-                        Variable(_) | Constant(_) | FuncEval(_, _) | Product(_) | Power { .. } => {
+                        Variable(_) | Constant(_) | Function(_, _) | Product(_) | Power { .. } => {
                             e.to_string()
                         }
                         Sum(_) => format!("({})", e),
@@ -208,13 +208,13 @@ impl std::fmt::Display for Expr {
             Power { base, exp } => {
                 match **base {
                     Variable(_) | Constant(_) => write!(f, "{}^", base)?,
-                    FuncEval(_, _) | Sum(_) | Product(_) | Power { .. } => {
+                    Function(_, _) | Sum(_) | Product(_) | Power { .. } => {
                         write!(f, "({})^", base)?
                     }
                 }
                 match **exp {
                     Variable(_) | Constant(_) => write!(f, "{}", exp),
-                    FuncEval(_, _) | Sum(_) | Product(_) | Power { .. } => write!(f, "({})", exp),
+                    Function(_, _) | Sum(_) | Product(_) | Power { .. } => write!(f, "({})", exp),
                 }
             }
         }
@@ -273,7 +273,7 @@ impl Clone for Expr {
         match self {
             Variable(ref name) => Variable(name.clone()),
             Constant(c) => Constant(*c),
-            FuncEval(func, ref arg) => FuncEval(*func, arg.clone()),
+            Function(func, ref arg) => Function(*func, arg.clone()),
             Sum(args) => Sum(args.clone()),
             Product(args) => Product(args.clone()),
             Power { ref base, ref exp } => Power {
@@ -395,23 +395,6 @@ impl Expr {
         }
     }
 
-    // fn clone(&self) -> Expr {
-    //     match self {
-    //         Variable(name) => Variable(name.clone()),
-    //         Constant(c) => Constant(*c),
-    //         UnaryExpr { a, func } => UnaryExpr {
-    //             a: (*a).clone(),
-    //             func: *func,
-    //         },
-    //         Product(args) => Product( args: args.clone() },
-    //         Sum(args) => Sum( args: args.clone() },
-    //         Power { base, exp } => Power {
-    //             base: (*base).clone(),
-    //             exp: (*exp).clone(),
-    //         },
-    //     }
-    // }
-
     fn derivative(&self, x: &Expr) -> Expr {
         if let Variable(x_str) = &*x {
             match self {
@@ -423,7 +406,7 @@ impl Expr {
                     }
                 }
                 Constant(_) => constant(0.0),
-                FuncEval(func, arg) => match func {
+                Function(func, arg) => match func {
                     Exp => {
                         if **arg == *x {
                             self.clone()
@@ -576,7 +559,7 @@ impl Expr {
                                 match child_arg {
                                     Product(_)
                                     | Sum(_)
-                                    | FuncEval(_, _)
+                                    | Function(_, _)
                                     | Power { .. }
                                     | Variable(_) => new_args.push(child_arg.clone()),
                                     Constant(c) => constant *= c,
@@ -612,7 +595,7 @@ impl Expr {
                                 match child_arg {
                                     Product(_)
                                     | Sum(_)
-                                    | FuncEval(_, _)
+                                    | Function(_, _)
                                     | Power { .. }
                                     | Variable(_) => new_args.push(child_arg.clone()),
                                     Constant(c) => constant += c,
@@ -637,7 +620,7 @@ impl Expr {
                     }
                 }
             }
-            FuncEval(func, arg) => FuncEval(func, Box::new(arg.simplify())),
+            Function(func, arg) => Function(func, Box::new(arg.simplify())),
             Power { base, exp } => power(base.simplify(), exp.simplify()),
             _ => self,
         };
@@ -649,6 +632,7 @@ impl Expr {
 enum Token {
     Constant(Number),
     Variable(String),
+    Function(FuncName),
     Multiplication,
     Division,
     Addition,
@@ -674,12 +658,34 @@ impl std::fmt::Display for Token {
         match self {
             Token::Constant(Number(c)) => write!(f, "{}", c),
             Token::Variable(name) => write!(f, "{}", name),
+            Token::Function(name)=> write!(f, "{}", name),
             Token::Multiplication => write!(f, "*"),
             Token::Division => write!(f, "/"),
             Token::Addition => write!(f, "+"),
             Token::Subtraction => write!(f, "-"),
             Token::RParen => write!(f, "("),
             Token::LParen => write!(f, ")"),
+        }
+    }
+}
+
+impl Token {
+    fn is_function(&self) -> bool {
+        match self {
+            Token::Function(_) => true,
+            _ => false,
+        }
+    }
+    fn is_variable(&self) -> bool {
+        match self {
+            Token::Variable(_) => true,
+            _ => false,
+        }
+    }
+    fn is_constant(&self) -> bool {
+        match self {
+            Token::Constant(_) => true,
+            _ => false,
         }
     }
 }
@@ -698,13 +704,15 @@ fn parse(expr: &str) -> Expr {
     lazy_static! {
         static ref STARTS_WITH_NUMBER: Regex = get_starts_with_float_regex();
         static ref STARTS_WITH_OPERATOR: Regex = Regex::new(r"^[\+\*-/]").unwrap();
-        static ref STARTS_WITH_VARIABLE: Regex = Regex::new("^[a-zA-Z_]+").unwrap();
+        static ref STARTS_WITH_FUNCTION: Regex = Regex::new("^exp").unwrap();
+        static ref STARTS_WITH_VARIABLE: Regex = Regex::new("^y\\[\\d+\\]|^[a-zA-Z_]+").unwrap();
+        //static ref STARTS_WITH_VARIABLE: Regex = Regex::new("").unwrap();
     }
     let expr: String = expr.chars().filter(|c| !c.is_whitespace()).collect();
     let mut expr = &expr[..];
     // we parse the expression using a shunting yard algorithm. See
     // https://en.wikipedia.org/wiki/Shunting-yard_algorithm
-    let mut output = Vec::with_capacity(expr.len());
+    let mut output:Vec<Token> = Vec::with_capacity(expr.len());
     // In a valid expression, the number of operators is less than half the number of characters
     // Proof:
     // suppose the expression contains only the +,-,*,/ operators. One of the operators needs
@@ -725,16 +733,16 @@ fn parse(expr: &str) -> Expr {
                 "*" => option_token = Some(Token::Multiplication),
                 "/" => option_token = Some(Token::Division),
                 "+" | "-" => {
-                    if output.len() > 0 {
-                        // We do not want a unary plus or minus to be parsed as an operator
-                        // plus or minus.
-                        // If output.len() > 0 then a variable or a constant has already been
-                        // parsed. Hence, in this case the plus sign is an operator.
-                        option_token = Some(match match_.as_str() {
-                            "+" => Token::Addition,
-                            "-" => Token::Subtraction,
-                            _ => panic!("internal error"),
-                        });
+                    if let Some(last) = output.last() {
+                        if last.is_variable() || last.is_constant() {
+                            // We do not want a unary plus or minus to be parsed as an operator
+                            // plus or minus.
+                            option_token = Some(match match_.as_str() {
+                                "+" => Token::Addition,
+                                "-" => Token::Subtraction,
+                                _ => panic!("internal error"),
+                            });
+                        }
                     }
                 }
                 _ => panic!("internal error: unknown operator: {}", match_.as_str()),
@@ -746,6 +754,12 @@ fn parse(expr: &str) -> Expr {
             if let Some(match_) = STARTS_WITH_NUMBER.find(expr) {
                 expr = &expr[match_.end()..];
                 Token::Constant(Number(f64::from_str(match_.as_str()).unwrap()))
+            } else if let Some(match_) = STARTS_WITH_FUNCTION.find(expr) {
+                expr = &expr[match_.end()..];
+                Token::Function(match match_.as_str() {
+                    "exp" => Exp,
+                    _ => panic!("internal error: unknown function {}", match_.as_str())
+                })
             } else if let Some(match_) = STARTS_WITH_VARIABLE.find(expr) {
                 expr = &expr[match_.end()..];
                 Token::Variable(match_.as_str().to_string())
@@ -767,20 +781,31 @@ fn parse(expr: &str) -> Expr {
             Token::Addition | Token::Subtraction => {
                 while let Some(operator) = operators.last() {
                     if *operator != Token::LParen {
-                        output.push(operators.pop().unwrap());
+                        output.push(operators.pop().unwrap())
                     } else {
-                        break;
+                        break
                     }
                 }
                 operators.push(token);
             }
             Token::Multiplication | Token::Division => {
                 // todo: figure out the associativity of operators
-                while let Some(token) = operators.last() {
-                    if *token == Token::Multiplication || *token == Token::Division {
+                while let Some(operator) = operators.last() {
+                    if *operator == Token::Multiplication || *operator == Token::Division
+                        || operator.is_function() {
                         output.push(operators.pop().unwrap());
                     } else {
                         break;
+                    }
+                }
+                operators.push(token)
+            }
+            Token::Function(_) => {
+                while let Some(operator) = operators.last() {
+                    if operator.is_function() {
+                        output.push(operators.pop().unwrap());
+                    } else {
+                        break
                     }
                 }
                 operators.push(token)
@@ -806,6 +831,7 @@ fn parse(expr: &str) -> Expr {
                 }
             }
         }
+
     }
     while let Some(operator) = operators.last() {
         if *operator != Token::LParen {
@@ -823,6 +849,10 @@ fn parse(expr: &str) -> Expr {
             Token::Constant(Number(c)) => stack.push(Constant(c)),
             Token::Variable(name) => stack.push(Variable(name)),
             Token::LParen | Token::RParen => {}
+            Token::Function(name) => {
+                let arg = stack.pop().unwrap();
+                stack.push(Function(name, Box::new(arg)))
+            }
             _ => {
                 let op1 = stack.pop().unwrap();
                 let op2 = stack.pop().unwrap();
@@ -929,7 +959,7 @@ fn main() {
     display!(expanded);
     display!(expanded.simplify());
 
-    let expr = FuncEval(Exp, Box::new(parse("5.1e-1*x*x")));
+    let expr = Function(Exp, Box::new(parse("5.1e-1*x*x")));
     println!();
     display!(expr);
     display!(expr.derivative(x));
@@ -949,4 +979,10 @@ fn main() {
     display!(parse("x/(y*a*b*c)").derivative(&parse("y")).simplify());
     display!(parse("0+x"));
     display!(parse("0+x").simplify());
+
+    println!();
+//    display!(parse("y[0]+exp(1/exp(y[1])+x)*y[11]"));
+//    display!(parse("1/exp(x)"));
+    //display!(parse("y[0]*(-1.965927E+4)+y[11]*(2.1E+1/4.0E+2)"));
+    display!(parse("y[0]*(-1.965927E+4)+y[11]*(2.1E+1/4.0E+2)-y[96]*(y[144]*5.3175E+1+y[145]*5.3175E+1+y[146]*5.3175E+1+y[147]*5.3175E+1+y[148]*5.3175E+1+y[149]*5.3175E+1+y[150]*5.3175E+1+y[151]*5.3175E+1+y[152]*5.3175E+1-8.343294077331707E+1)+y[6]*exp(y[153]*(-2.145E-2))*7.308510546875-y[0]*y[152]*2.493"));
 }
