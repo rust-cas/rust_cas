@@ -6,8 +6,8 @@ use std::fmt::Formatter;
 use std::fmt::Write;
 use std::str::FromStr;
 
-use crate::Expr::{Constant, Power, Product, Sum, UnaryExpr, Variable};
-use crate::UnaryOp::{Exp, Minus};
+use crate::Expr::{Constant, FuncEval, Power, Product, Sum, Variable};
+use crate::Func::{Exp, Minus};
 
 macro_rules! display {
     ($e:expr) => {
@@ -27,14 +27,14 @@ extern crate lazy_static;
 enum Expr {
     Variable(String),
     Constant(f64),
-    UnaryExpr { op: UnaryOp, a: Box<Expr> },
+    FuncEval(Func, Box<Expr>),
     Sum(Vec<Expr>),
     Product(Vec<Expr>),
     Power { base: Box<Expr>, exp: Box<Expr> },
 }
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Ord, PartialOrd)]
-enum UnaryOp {
+enum Func {
     Minus,
     Exp,
 }
@@ -53,11 +53,8 @@ impl PartialEq for Expr {
                 Constant(other_c) => c == other_c,
                 _ => false,
             },
-            UnaryExpr { op, a } => match other_simplified {
-                UnaryExpr {
-                    op: other_op,
-                    a: other_a,
-                } => op == other_op && a == other_a,
+            FuncEval(func, arg) => match other_simplified {
+                FuncEval(other_func, other_arg) => func == other_func && arg == other_arg,
                 _ => false,
             },
             Product(args) => match other_simplified {
@@ -105,29 +102,26 @@ impl PartialOrd for Expr {
                 }
                 _ => Ordering::Less,
             },
-            UnaryExpr { op, a } => match other {
+            FuncEval(func, arg) => match other {
                 Variable(_) | Constant(_) => Ordering::Greater,
-                UnaryExpr {
-                    op: other_op,
-                    a: other_a,
-                } => match op.cmp(&other_op) {
-                    Ordering::Equal => a.cmp(&other_a),
-                    _ => op.cmp(&other_op),
+                FuncEval(other_func, other_arg) => match func.cmp(&other_func) {
+                    Ordering::Equal => arg.cmp(&other_arg),
+                    _ => func.cmp(&other_func),
                 },
                 _ => Ordering::Less,
             },
             Sum(args) => match other {
-                Variable(_) | Constant(_) | UnaryExpr { .. } => Ordering::Greater,
+                Variable(_) | Constant(_) | FuncEval(_, _) => Ordering::Greater,
                 Sum(other_args) => sort(args).cmp(&sort(other_args)),
                 _ => Ordering::Less,
             },
             Product(args) => match other {
-                Variable(_) | Constant(_) | UnaryExpr { .. } | Sum(_) => Ordering::Greater,
+                Variable(_) | Constant(_) | FuncEval(_, _) | Sum(_) => Ordering::Greater,
                 Product(other_args) => sort(args).cmp(&sort(other_args)),
                 _ => Ordering::Less,
             },
             Power { base, exp } => match other {
-                Variable(_) | Constant(_) | UnaryExpr { .. } | Sum(_) | Product(_) => {
+                Variable(_) | Constant(_) | FuncEval(_, _) | Sum(_) | Product(_) => {
                     Ordering::Greater
                 }
                 Power {
@@ -153,7 +147,7 @@ impl Ord for Expr {
 
 impl Eq for Expr {}
 
-impl std::fmt::Display for UnaryOp {
+impl std::fmt::Display for Func {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         write!(
             f,
@@ -171,9 +165,9 @@ impl std::fmt::Debug for Expr {
         match self {
             Variable(name) => write!(f, "{}", name),
             Constant(c) => write!(f, "{}", c),
-            UnaryExpr { op, a } => match op {
-                Minus => write!(f, "- ({:?})", a),
-                _ => write!(f, "{}({:?})", op, a),
+            FuncEval(func, arg) => match func {
+                Minus => write!(f, "- ({:?})", arg),
+                _ => write!(f, "{}({:?})", func, arg),
             },
             Sum(args) => write!(f, "sum({:})", &debug_args(args)),
             Product(args) => write!(f, "product({:})", &debug_args(args)),
@@ -199,9 +193,9 @@ impl std::fmt::Display for Expr {
         match self {
             Variable(name) => write!(f, "{}", name),
             Constant(c) => write!(f, "{}", c),
-            UnaryExpr { op, a } => match op {
-                Minus => write!(f, "- ({})", a),
-                _ => write!(f, "{}({})", op, a),
+            FuncEval(func, arg) => match func {
+                Minus => write!(f, "- ({})", arg),
+                _ => write!(f, "{}({})", func, arg),
             },
             Sum(args) => {
                 let arg_strings = args.iter().map(|e| e.to_string()).collect::<Vec<String>>();
@@ -211,11 +205,9 @@ impl std::fmt::Display for Expr {
                 let arg_strings = args
                     .iter()
                     .map(|e| match *e {
-                        Variable { .. }
-                        | Constant { .. }
-                        | UnaryExpr { .. }
-                        | Product(_)
-                        | Power { .. } => e.to_string(),
+                        Variable(_) | Constant(_) | FuncEval(_, _) | Product(_) | Power { .. } => {
+                            e.to_string()
+                        }
                         Sum(_) => format!("({})", e),
                     })
                     .collect::<Vec<String>>();
@@ -224,13 +216,13 @@ impl std::fmt::Display for Expr {
             Power { base, exp } => {
                 match **base {
                     Variable(_) | Constant(_) => write!(f, "{}^", base)?,
-                    UnaryExpr { .. } | Sum(_) | Product(_) | Power { .. } => {
+                    FuncEval(_, _) | Sum(_) | Product(_) | Power { .. } => {
                         write!(f, "({})^", base)?
                     }
                 }
                 match **exp {
                     Variable(_) | Constant(_) => write!(f, "{}", exp),
-                    UnaryExpr { .. } | Sum(_) | Product(_) | Power { .. } => write!(f, "({})", exp),
+                    FuncEval(_, _) | Sum(_) | Product(_) | Power { .. } => write!(f, "({})", exp),
                 }
             }
         }
@@ -247,10 +239,6 @@ fn constant(c: f64) -> Expr {
     } else {
         panic!("encountered a NaN (not a number)")
     }
-}
-
-fn unary_expr(op: UnaryOp, a: Expr) -> Expr {
-    UnaryExpr { op, a: Box::new(a) }
 }
 
 fn product_skeleton(size: usize) -> Expr {
@@ -293,10 +281,7 @@ impl Clone for Expr {
         match self {
             Variable(ref name) => Variable(name.clone()),
             Constant(c) => Constant(*c),
-            UnaryExpr { ref a, ref op } => UnaryExpr {
-                a: (*a).clone(),
-                op: *op,
-            },
+            FuncEval(func, ref arg) => FuncEval(*func, arg.clone()),
             Sum(args) => Sum(args.clone()),
             Product(args) => Product(args.clone()),
             Power { ref base, ref exp } => Power {
@@ -422,9 +407,9 @@ impl Expr {
     //     match self {
     //         Variable(name) => Variable(name.clone()),
     //         Constant(c) => Constant(*c),
-    //         UnaryExpr { a, op } => UnaryExpr {
+    //         UnaryExpr { a, func } => UnaryExpr {
     //             a: (*a).clone(),
-    //             op: *op,
+    //             func: *func,
     //         },
     //         Product(args) => Product( args: args.clone() },
     //         Sum(args) => Sum( args: args.clone() },
@@ -446,13 +431,13 @@ impl Expr {
                     }
                 }
                 Constant(_) => constant(0.0),
-                UnaryExpr { a, op } => match op {
-                    Minus => unary_expr(Minus, a.derivative(x)),
+                FuncEval(func, arg) => match func {
+                    Minus => FuncEval(Minus, Box::new(arg.derivative(x))),
                     Exp => {
-                        if **a == *x {
+                        if **arg == *x {
                             self.clone()
                         } else {
-                            Product(vec![self.clone(), a.derivative(x)])
+                            Product(vec![self.clone(), arg.derivative(x)])
                         }
                     }
                 },
@@ -600,7 +585,7 @@ impl Expr {
                                 match child_arg {
                                     Product(_)
                                     | Sum(_)
-                                    | UnaryExpr { .. }
+                                    | FuncEval(_, _)
                                     | Power { .. }
                                     | Variable(_) => new_args.push(child_arg.clone()),
                                     Constant(c) => constant *= c,
@@ -635,7 +620,7 @@ impl Expr {
                                 match child_arg {
                                     Product(_)
                                     | Sum(_)
-                                    | UnaryExpr { .. }
+                                    | FuncEval(_, _)
                                     | Power { .. }
                                     | Variable(_) => new_args.push(child_arg.clone()),
                                     Constant(c) => constant += c,
@@ -659,7 +644,7 @@ impl Expr {
                     }
                 }
             }
-            UnaryExpr { op, a } => unary_expr(op, a.simplify()),
+            FuncEval(func, arg) => FuncEval(func, Box::new(arg.simplify())),
             Power { base, exp } => power(base.simplify(), exp.simplify()),
             _ => self,
         };
@@ -748,7 +733,7 @@ fn parse(expr: &str) -> Expr {
                         // parsed. Hence, in this case the plus sign is an operator.
                         option_token = Some(Token::Addition);
                     }
-                },
+                }
                 _ => panic!("unsupported token: {}", match_.as_str()),
             }
         }
@@ -929,7 +914,7 @@ fn main() {
     display!(expanded);
     display!(expanded.simplify());
 
-    let expr = unary_expr(Exp, parse("5.1e-1*x*x"));
+    let expr = FuncEval(Exp, Box::new(parse("5.1e-1*x*x")));
     println!();
     display!(expr);
     display!(expr.derivative(x));
@@ -942,7 +927,6 @@ fn main() {
 
     display!(parse("x*(x+x) + y"));
     display!(parse("(x + x)*x + x*x").full_expand());
-
 
     display!(parse("1+3*5*x"));
 }
