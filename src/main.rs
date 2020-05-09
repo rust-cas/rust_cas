@@ -7,7 +7,7 @@ use std::fmt::Write;
 use std::str::FromStr;
 
 use crate::Expr::{Constant, FuncEval, Power, Product, Sum, Variable};
-use crate::Func::{Exp};
+use crate::Func::Exp;
 
 macro_rules! display {
     ($e:expr) => {
@@ -583,6 +583,7 @@ impl Expr {
                                 }
                             }
                         }
+                        Constant(c) => constant *= c,
                         _ => new_args.push(arg.clone()),
                     }
                 }
@@ -618,6 +619,7 @@ impl Expr {
                                 }
                             }
                         }
+                        Constant(c) => constant += c,
                         _ => new_args.push(arg.clone()),
                     }
                 }
@@ -648,7 +650,9 @@ enum Token {
     Constant(Number),
     Variable(String),
     Multiplication,
+    Division,
     Addition,
+    Subtraction,
     LParen,
     RParen,
 }
@@ -671,7 +675,9 @@ impl std::fmt::Display for Token {
             Token::Constant(Number(c)) => write!(f, "{}", c),
             Token::Variable(name) => write!(f, "{}", name),
             Token::Multiplication => write!(f, "*"),
+            Token::Division => write!(f, "/"),
             Token::Addition => write!(f, "+"),
+            Token::Subtraction => write!(f, "-"),
             Token::RParen => write!(f, "("),
             Token::LParen => write!(f, ")"),
         }
@@ -717,15 +723,21 @@ fn parse(expr: &str) -> Expr {
             expr = &expr[match_.end()..];
             match match_.as_str() {
                 "*" => option_token = Some(Token::Multiplication),
-                "+" => {
+                "/" => option_token = Some(Token::Division),
+                "+" | "-" => {
                     if output.len() > 0 {
-                        // We do not want a unary plus to be parsed as an operator plus
+                        // We do not want a unary plus or minus to be parsed as an operator
+                        // plus or minus.
                         // If output.len() > 0 then a variable or a constant has already been
                         // parsed. Hence, in this case the plus sign is an operator.
-                        option_token = Some(Token::Addition);
+                        option_token = Some(match match_.as_str() {
+                            "+" => Token::Addition,
+                            "-" => Token::Subtraction,
+                            _ => panic!("internal error"),
+                        });
                     }
                 }
-                _ => panic!("unsupported token: {}", match_.as_str()),
+                _ => panic!("internal error: unknown operator: {}", match_.as_str()),
             }
         }
         let token = if let Some(unwrapped_token) = option_token {
@@ -752,31 +764,32 @@ fn parse(expr: &str) -> Expr {
         };
         match token {
             Token::Constant(_) | Token::Variable(_) => output.push(token),
-            Token::Addition => {
-                while let Some(token) = operators.last() {
-                    if *token != Token::LParen {
+            Token::Addition | Token::Subtraction => {
+                while let Some(operator) = operators.last() {
+                    if *operator != Token::LParen {
                         output.push(operators.pop().unwrap());
                     } else {
                         break;
                     }
                 }
-                operators.push(Token::Addition);
+                operators.push(token);
             }
-            Token::Multiplication => {
+            Token::Multiplication | Token::Division => {
+                // todo: figure out the associativity of operators
                 while let Some(token) = operators.last() {
-                    if *token == Token::Multiplication {
+                    if *token == Token::Multiplication || *token == Token::Division {
                         output.push(operators.pop().unwrap());
                     } else {
                         break;
                     }
                 }
-                operators.push(Token::Multiplication)
+                operators.push(token)
             }
             Token::LParen => operators.push(token),
             Token::RParen => {
                 let mut found_matching_lparen = false;
-                while let Some(token) = operators.last() {
-                    if *token != Token::LParen {
+                while let Some(operator) = operators.last() {
+                    if *operator != Token::LParen {
                         output.push(operators.pop().unwrap())
                     } else {
                         operators.pop();
@@ -794,8 +807,8 @@ fn parse(expr: &str) -> Expr {
             }
         }
     }
-    while let Some(token) = operators.last() {
-        if *token != Token::LParen {
+    while let Some(operator) = operators.last() {
+        if *operator != Token::LParen {
             output.push(operators.pop().unwrap())
         } else {
             panic!(
@@ -809,17 +822,28 @@ fn parse(expr: &str) -> Expr {
         match token {
             Token::Constant(Number(c)) => stack.push(Constant(c)),
             Token::Variable(name) => stack.push(Variable(name)),
-            Token::Multiplication => {
-                let op1 = stack.pop().unwrap();
-                let op2 = stack.pop().unwrap();
-                stack.push(Product(vec![op2, op1]));
-            }
-            Token::Addition => {
-                let op1 = stack.pop().unwrap();
-                let op2 = stack.pop().unwrap();
-                stack.push(Sum(vec![op2, op1]));
-            }
             Token::LParen | Token::RParen => {}
+            _ => {
+                let op1 = stack.pop().unwrap();
+                let op2 = stack.pop().unwrap();
+                match token {
+                    // todo unwrap multiplications and sums in op1 and/or op2
+                    Token::Multiplication => stack.push(Product(vec![op2, op1])),
+                    Token::Addition => stack.push(Sum(vec![op2, op1])),
+                    Token::Subtraction => {
+                        let minus_op1 = Product(vec![Constant(-1.0), op1]);
+                        stack.push(Sum(vec![op2, minus_op1]))
+                    }
+                    Token::Division => {
+                        let reciprocal_op1 = Power {
+                            base: Box::new(op1),
+                            exp: Box::new(Constant(-1.0)),
+                        };
+                        stack.push(Product(vec![op2, reciprocal_op1]))
+                    }
+                    _ => panic!("unexpected token {}", token),
+                }
+            }
         }
     }
     stack.pop().unwrap()
@@ -919,5 +943,10 @@ fn main() {
     display!(parse("x*(x+x) + y"));
     display!(parse("(x + x)*x + x*x").full_expand());
 
-    display!(parse("1+3*5*x"));
+    display!(parse("1-3*5*x"));
+    display!(parse("x/(y*a*b*c)"));
+    display!(parse("x/(y*a*b*c)").derivative(&parse("y")));
+    display!(parse("x/(y*a*b*c)").derivative(&parse("y")).simplify());
+    display!(parse("0+x"));
+    display!(parse("0+x").simplify());
 }
