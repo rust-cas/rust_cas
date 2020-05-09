@@ -28,8 +28,8 @@ enum Expr {
     Variable(String),
     Constant(f64),
     UnaryExpr { op: UnaryOp, a: Box<Expr> },
-    Sum { args: Vec<Expr> },
-    Product { args: Vec<Expr> },
+    Sum(Vec<Expr>),
+    Product(Vec<Expr>),
     Power { base: Box<Expr>, exp: Box<Expr> },
 }
 
@@ -60,12 +60,12 @@ impl PartialEq for Expr {
                 } => op == other_op && a == other_a,
                 _ => false,
             },
-            Product { args } => match other_simplified {
-                Product { args: other_args } => sort(&args) == sort(&other_args),
+            Product(args) => match other_simplified {
+                Product(other_args) => sort(&args) == sort(&other_args),
                 _ => false,
             },
-            Sum { args } => match other_simplified {
-                Sum { args: other_args } => sort(&args) == sort(&other_args),
+            Sum(args) => match other_simplified {
+                Sum(other_args) => sort(&args) == sort(&other_args),
                 _ => false,
             },
             Power { base, exp } => match other {
@@ -116,18 +116,18 @@ impl PartialOrd for Expr {
                 },
                 _ => Ordering::Less,
             },
-            Sum { args } => match other {
+            Sum(args) => match other {
                 Variable(_) | Constant(_) | UnaryExpr { .. } => Ordering::Greater,
-                Sum { args: other_args } => sort(args).cmp(&sort(other_args)),
+                Sum(other_args) => sort(args).cmp(&sort(other_args)),
                 _ => Ordering::Less,
             },
-            Product { args } => match other {
-                Variable(_) | Constant(_) | UnaryExpr { .. } | Sum { .. } => Ordering::Greater,
-                Product { args: other_args } => sort(args).cmp(&sort(other_args)),
+            Product(args) => match other {
+                Variable(_) | Constant(_) | UnaryExpr { .. } | Sum(_) => Ordering::Greater,
+                Product(other_args) => sort(args).cmp(&sort(other_args)),
                 _ => Ordering::Less,
             },
             Power { base, exp } => match other {
-                Variable(_) | Constant(_) | UnaryExpr { .. } | Sum { .. } | Product { .. } => {
+                Variable(_) | Constant(_) | UnaryExpr { .. } | Sum(_) | Product(_) => {
                     Ordering::Greater
                 }
                 Power {
@@ -175,8 +175,8 @@ impl std::fmt::Debug for Expr {
                 Minus => write!(f, "- ({:?})", a),
                 _ => write!(f, "{}({:?})", op, a),
             },
-            Sum { args } => write!(f, "sum({:})", &debug_args(args)),
-            Product { args } => write!(f, "product({:})", &debug_args(args)),
+            Sum(args) => write!(f, "sum({:})", &debug_args(args)),
+            Product(args) => write!(f, "product({:})", &debug_args(args)),
             Power { base, exp } => write!(f, "({:?})^({:?})", base, exp),
         }
     }
@@ -203,20 +203,20 @@ impl std::fmt::Display for Expr {
                 Minus => write!(f, "- ({})", a),
                 _ => write!(f, "{}({})", op, a),
             },
-            Sum { args } => {
+            Sum(args) => {
                 let arg_strings = args.iter().map(|e| e.to_string()).collect::<Vec<String>>();
                 write!(f, "{}", &arg_strings[..].join(" + "))
             }
-            Product { args } => {
+            Product(args) => {
                 let arg_strings = args
                     .iter()
                     .map(|e| match *e {
                         Variable { .. }
                         | Constant { .. }
                         | UnaryExpr { .. }
-                        | Product { .. }
+                        | Product(_)
                         | Power { .. } => e.to_string(),
-                        Sum { .. } => format!("({})", e),
+                        Sum(_) => format!("({})", e),
                     })
                     .collect::<Vec<String>>();
                 write!(f, "{}", &arg_strings[..].join("·"))
@@ -224,15 +224,13 @@ impl std::fmt::Display for Expr {
             Power { base, exp } => {
                 match **base {
                     Variable(_) | Constant(_) => write!(f, "{}^", base)?,
-                    UnaryExpr { .. } | Sum { .. } | Product { .. } | Power { .. } => {
+                    UnaryExpr { .. } | Sum(_) | Product(_) | Power { .. } => {
                         write!(f, "({})^", base)?
                     }
                 }
                 match **exp {
                     Variable(_) | Constant(_) => write!(f, "{}", exp),
-                    UnaryExpr { .. } | Sum { .. } | Product { .. } | Power { .. } => {
-                        write!(f, "({})", exp)
-                    }
+                    UnaryExpr { .. } | Sum(_) | Product(_) | Power { .. } => write!(f, "({})", exp),
                 }
             }
         }
@@ -256,15 +254,11 @@ fn unary_expr(op: UnaryOp, a: Expr) -> Expr {
 }
 
 fn product_skeleton(size: usize) -> Expr {
-    Product {
-        args: Vec::with_capacity(size),
-    }
+    Product(Vec::with_capacity(size))
 }
 
 fn sum_skeleton(size: usize) -> Expr {
-    Sum {
-        args: Vec::with_capacity(size),
-    }
+    Sum(Vec::with_capacity(size))
 }
 
 fn power(base: Expr, exp: Expr) -> Expr {
@@ -303,8 +297,8 @@ impl Clone for Expr {
                 a: (*a).clone(),
                 op: *op,
             },
-            Sum { args } => Sum { args: args.clone() },
-            Product { args } => Product { args: args.clone() },
+            Sum(args) => Sum(args.clone()),
+            Product(args) => Product(args.clone()),
             Power { ref base, ref exp } => Power {
                 base: (*base).clone(),
                 exp: (*exp).clone(),
@@ -313,34 +307,30 @@ impl Clone for Expr {
     }
 }
 
-    fn new_length_product(args: &Vec<Expr>) -> usize {
-        let mut new_length = args.len();
-        for arg in args {
-            match *arg {
-                Product {
-                    args: ref child_args,
-                } => {
-                    new_length -= 1;
-                    for child_arg in child_args {
-                        new_length += match *child_arg {
-                            Constant(_) => 0,
-                            _ => 1,
-                        }
+fn new_length_product(args: &Vec<Expr>) -> usize {
+    let mut new_length = args.len();
+    for arg in args {
+        match *arg {
+            Product(ref child_args) => {
+                new_length -= 1;
+                for child_arg in child_args {
+                    new_length += match *child_arg {
+                        Constant(_) => 0,
+                        _ => 1,
                     }
                 }
-                _ => {}
             }
+            _ => {}
         }
-        new_length
     }
+    new_length
+}
 
 fn new_length_sum(args: &Vec<Expr>) -> usize {
     let mut new_length = args.len();
     for arg in args {
         match *arg {
-            Sum {
-                args: ref child_args,
-            } => {
+            Sum(ref child_args) => {
                 new_length -= 1;
                 for child_arg in child_args {
                     new_length += match *child_arg {
@@ -361,7 +351,7 @@ impl Expr {
 
     fn is_expandable(&self) -> bool {
         match *self {
-            Product { ref args } => args.iter().any(|arg| arg.is_addition()),
+            Product(ref args) => args.iter().any(|arg| arg.is_addition()),
             //Power { ref base, .. } => base.is_addition() || base.is_expandable(),
             _ => false,
         }
@@ -369,12 +359,8 @@ impl Expr {
 
     fn expand_leaves(self) -> Expr {
         match self {
-            Sum { args } => Sum {
-                args: expand_all(&args),
-            },
-            Product { args } => Product {
-                args: expand_all(&args),
-            },
+            Sum(args) => Sum(expand_all(&args)),
+            Product(args) => Product(expand_all(&args)),
             _ => self,
         }
     }
@@ -385,7 +371,7 @@ impl Expr {
     }
 
     fn expand(self) -> Expr {
-        if let Product { ref args } = self {
+        if let Product(ref args) = self {
             if !self.is_expandable() {
                 return self;
             }
@@ -394,10 +380,7 @@ impl Expr {
             let expanded_args = args
                 .iter()
                 .filter_map(|arg| {
-                    if let Sum {
-                        args: ref child_args,
-                    } = arg
-                    {
+                    if let Sum(ref child_args) = arg {
                         Some(child_args.clone())
                     } else {
                         None
@@ -410,19 +393,17 @@ impl Expr {
                     for expr in &unexpandable_factors {
                         e.push((**expr).clone())
                     }
-                    Product { args: e }
+                    Product(e)
                 })
                 .collect();
-            Sum {
-                args: expanded_args,
-            }
+            Sum(expanded_args)
         } else {
             self
         }
     }
 
     fn is_addition(&self) -> bool {
-        if let Sum { .. } = *self {
+        if let Sum(_) = *self {
             true
         } else {
             false
@@ -431,8 +412,8 @@ impl Expr {
 
     fn get_args(&mut self) -> Option<&mut Vec<Expr>> {
         match self {
-            Sum { args } => Some(args),
-            Product { args } => Some(args),
+            Sum(args) => Some(args),
+            Product(args) => Some(args),
             _ => None,
         }
     }
@@ -445,8 +426,8 @@ impl Expr {
     //             a: (*a).clone(),
     //             op: *op,
     //         },
-    //         Product { args } => Product { args: args.clone() },
-    //         Sum { args } => Sum { args: args.clone() },
+    //         Product(args) => Product( args: args.clone() },
+    //         Sum(args) => Sum( args: args.clone() },
     //         Power { base, exp } => Power {
     //             base: (*base).clone(),
     //             exp: (*exp).clone(),
@@ -471,19 +452,15 @@ impl Expr {
                         if **a == *x {
                             self.clone()
                         } else {
-                            Product {
-                                args: vec![self.clone(), a.derivative(x)],
-                            }
+                            Product(vec![self.clone(), a.derivative(x)])
                         }
                     }
                 },
-                Sum { args } => {
+                Sum(args) => {
                     // todo filter out constants
-                    Sum {
-                        args: args.iter().map(|e| e.derivative(&x)).collect(),
-                    }
+                    Sum(args.iter().map(|e| e.derivative(&x)).collect())
                 }
-                Product { args } => {
+                Product(args) => {
                     let mut derivative = sum_skeleton(args.len());
                     let terms = derivative.get_args().unwrap();
                     for i in 0..args.len() {
@@ -508,7 +485,7 @@ impl Expr {
                             if **base != *x {
                                 args.push((**base).derivative(&x));
                             }
-                            Product { args }
+                            Product(args)
                         }
                     }
                     _ => panic!("derivative can currently only handle constant exponents yet"),
@@ -532,7 +509,7 @@ impl Expr {
         // group equal expressions
         // for example, turn x+x into 2*x, or x*x into x^2
         match self {
-            Sum { args } => {
+            Sum(args) => {
                 let args = sort(&args);
                 let mut grouped = Vec::with_capacity(args.len());
                 let mut i = 0;
@@ -555,30 +532,24 @@ impl Expr {
                         let repeated = args[i].clone();
                         let times = Constant((k - i) as f64);
                         grouped.push(match repeated {
-                            Product {
-                                args: ref repeated_args,
-                            } => {
+                            Product(ref repeated_args) => {
                                 // if the repeated expression is a multiplication,
                                 // we just insert times into repeated_args
                                 let mut repeated_args = repeated_args.clone();
                                 repeated_args.insert(0, times);
-                                Product {
-                                    args: repeated_args,
-                                }
+                                Product(repeated_args)
                             }
-                            _ => Product {
-                                args: vec![times, repeated],
-                            },
+                            _ => Product(vec![times, repeated]),
                         });
                     }
                     i = k;
                 }
                 match grouped.len() {
                     1 => grouped[0].clone(),
-                    _ => Sum { args: grouped },
+                    _ => Sum(grouped),
                 }
             }
-            Product { args } => {
+            Product(args) => {
                 let args = sort(&args);
                 let mut grouped = Vec::with_capacity(args.len());
                 let mut i = 0;
@@ -606,31 +577,29 @@ impl Expr {
                 }
                 match grouped.len() {
                     1 => grouped[0].clone(),
-                    _ => Product{ args : grouped},
+                    _ => Product(grouped),
                 }
             }
             _ => self,
         }
     }
 
-
-
     fn simplify(self) -> Expr {
         let simplified = match self {
-            Product { args } => {
+            Product(args) => {
                 let args = simplify_all(&args);
                 if args.contains(&Expr::ZERO) {
-                    return Expr :: ZERO;
+                    return Expr::ZERO;
                 }
                 let mut new_args = Vec::with_capacity(new_length_product(&args));
                 let mut constant = 1.0;
                 for arg in args {
                     match arg {
-                        Product { args: child_args } => {
+                        Product(child_args) => {
                             for child_arg in child_args {
                                 match child_arg {
-                                    Product { .. }
-                                    | Sum { .. }
+                                    Product(_)
+                                    | Sum(_)
                                     | UnaryExpr { .. }
                                     | Power { .. }
                                     | Variable(_) => new_args.push(child_arg.clone()),
@@ -650,23 +619,22 @@ impl Expr {
                             if constant != 1.0 {
                                 new_args.insert(0, Constant(constant));
                             }
-                            Product { args: new_args }
+                            Product(new_args)
                         }
                     }
                 }
-
             }
-            Sum { args } => {
+            Sum(args) => {
                 let args = simplify_all(&args);
                 let mut new_args = Vec::with_capacity(new_length_sum(&args));
                 let mut constant = 0.0;
                 for arg in args {
                     match arg {
-                        Sum { args: child_args } => {
+                        Sum(child_args) => {
                             for child_arg in child_args {
                                 match child_arg {
-                                    Product { .. }
-                                    | Sum { .. }
+                                    Product(_)
+                                    | Sum(_)
                                     | UnaryExpr { .. }
                                     | Power { .. }
                                     | Variable(_) => new_args.push(child_arg.clone()),
@@ -686,11 +654,10 @@ impl Expr {
                             if constant != 0.0 {
                                 new_args.push(Constant(constant));
                             }
-                            Sum { args: new_args }
+                            Sum(new_args)
                         }
                     }
                 }
-
             }
             UnaryExpr { op, a } => unary_expr(op, a.simplify()),
             Power { base, exp } => power(base.simplify(), exp.simplify()),
@@ -856,16 +823,12 @@ fn parse(expr: &str) -> Expr {
             Token::Multiplication => {
                 let op1 = stack.pop().unwrap();
                 let op2 = stack.pop().unwrap();
-                stack.push(Product {
-                    args: vec![op2, op1],
-                });
+                stack.push(Product(vec![op2, op1]));
             }
             Token::Addition => {
                 let op1 = stack.pop().unwrap();
                 let op2 = stack.pop().unwrap();
-                stack.push(Sum {
-                    args: vec![op2, op1],
-                });
+                stack.push(Sum(vec![op2, op1]));
             }
             Token::LParen | Token::RParen => {}
         }
@@ -911,28 +874,17 @@ fn main() {
     display!(parse("1+3*5*x").simplify());
     display!(parse("1+3*5*x").derivative(x).simplify());
 
-    let expr = Product {
-        args: vec![x.clone(), x.clone(), x.clone(), x.clone()],
-    };
+    let expr = Product(vec![x.clone(), x.clone(), x.clone(), x.clone()]);
     println!();
     display!(expr);
     display!(expr.derivative(&x));
     display!(expr.derivative(&x).simplify());
     display!(expr.derivative(&x).simplify().group());
 
-    let expr = Product {
-        args: vec![
-            Product {
-                args: vec![
-                    Product {
-                        args: vec![x.clone(), x.clone()],
-                    },
-                    x.clone(),
-                ],
-            },
-            x.clone(),
-        ],
-    };
+    let expr = Product(vec![
+        Product(vec![Product(vec![x.clone(), x.clone()]), x.clone()]),
+        x.clone(),
+    ]);
     println!();
     println!("{}", expr);
     println!("{}", expr.derivative(x));
@@ -945,24 +897,19 @@ fn main() {
         .simplify()
         .group());
 
-
     let expr = power(x.clone(), constant(5.0));
     println!();
     println!("{}", expr);
     println!("{}", expr.derivative(x));
     println!("{}", expr.derivative(x).simplify());
 
-    let expr = Product {
-        args: vec![Constant(2.0), parse("x+y")],
-    };
+    let expr = Product(vec![Constant(2.0), parse("x+y")]);
     let expanded = expr.clone().expand();
     println!();
     display!(expr);
     display!(expanded);
 
-    let expr = Product {
-        args: vec![constant(2.0), parse("x+y"), parse("x+y")],
-    };
+    let expr = Product(vec![constant(2.0), parse("x+y"), parse("x+y")]);
     let expanded = expr.clone().expand();
     println!();
     display!(expr);
