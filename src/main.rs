@@ -658,7 +658,7 @@ impl std::fmt::Display for Token {
         match self {
             Token::Constant(Number(c)) => write!(f, "{}", c),
             Token::Variable(name) => write!(f, "{}", name),
-            Token::Function(name)=> write!(f, "{}", name),
+            Token::Function(name) => write!(f, "{}", name),
             Token::Multiplication => write!(f, "*"),
             Token::Division => write!(f, "/"),
             Token::Addition => write!(f, "+"),
@@ -705,14 +705,14 @@ fn parse(expr: &str) -> Expr {
         static ref STARTS_WITH_NUMBER: Regex = get_starts_with_float_regex();
         static ref STARTS_WITH_OPERATOR: Regex = Regex::new(r"^[\+\*-/]").unwrap();
         static ref STARTS_WITH_FUNCTION: Regex = Regex::new("^exp").unwrap();
-        static ref STARTS_WITH_VARIABLE: Regex = Regex::new("^y\\[\\d+\\]|^[a-zA-Z_]+").unwrap();
-        //static ref STARTS_WITH_VARIABLE: Regex = Regex::new("").unwrap();
+        static ref STARTS_WITH_VARIABLE: Regex =
+            Regex::new("^[a-zA-Z_]+\\[\\d+\\]|^[a-zA-Z_]+").unwrap();
     }
     let expr: String = expr.chars().filter(|c| !c.is_whitespace()).collect();
     let mut expr = &expr[..];
     // we parse the expression using a shunting yard algorithm. See
     // https://en.wikipedia.org/wiki/Shunting-yard_algorithm
-    let mut output:Vec<Token> = Vec::with_capacity(expr.len());
+    let mut output: Vec<Token> = Vec::with_capacity(expr.len());
     // In a valid expression, the number of operators is less than half the number of characters
     // Proof:
     // suppose the expression contains only the +,-,*,/ operators. One of the operators needs
@@ -727,7 +727,10 @@ fn parse(expr: &str) -> Expr {
     let mut operators = Vec::with_capacity(expr.len() / 2);
     while expr != "" {
         let mut option_token: Option<Token> = None;
-        if let Some(match_) = STARTS_WITH_OPERATOR.find(expr) {
+         if let Some(match_) = STARTS_WITH_NUMBER.find(expr) {
+             expr = &expr[match_.end()..];
+             option_token = Some(Token::Constant(Number(f64::from_str(match_.as_str()).unwrap())));
+         } else if let Some(match_) = STARTS_WITH_OPERATOR.find(expr) {
             expr = &expr[match_.end()..];
             match match_.as_str() {
                 "*" => option_token = Some(Token::Multiplication),
@@ -751,14 +754,11 @@ fn parse(expr: &str) -> Expr {
         let token = if let Some(unwrapped_token) = option_token {
             unwrapped_token
         } else {
-            if let Some(match_) = STARTS_WITH_NUMBER.find(expr) {
-                expr = &expr[match_.end()..];
-                Token::Constant(Number(f64::from_str(match_.as_str()).unwrap()))
-            } else if let Some(match_) = STARTS_WITH_FUNCTION.find(expr) {
+            if let Some(match_) = STARTS_WITH_FUNCTION.find(expr) {
                 expr = &expr[match_.end()..];
                 Token::Function(match match_.as_str() {
                     "exp" => Exp,
-                    _ => panic!("internal error: unknown function {}", match_.as_str())
+                    _ => panic!("internal error: unknown function {}", match_.as_str()),
                 })
             } else if let Some(match_) = STARTS_WITH_VARIABLE.find(expr) {
                 expr = &expr[match_.end()..];
@@ -783,7 +783,7 @@ fn parse(expr: &str) -> Expr {
                     if *operator != Token::LParen {
                         output.push(operators.pop().unwrap())
                     } else {
-                        break
+                        break;
                     }
                 }
                 operators.push(token);
@@ -791,8 +791,10 @@ fn parse(expr: &str) -> Expr {
             Token::Multiplication | Token::Division => {
                 // todo: figure out the associativity of operators
                 while let Some(operator) = operators.last() {
-                    if *operator == Token::Multiplication || *operator == Token::Division
-                        || operator.is_function() {
+                    if *operator == Token::Multiplication
+                        || *operator == Token::Division
+                        || operator.is_function()
+                    {
                         output.push(operators.pop().unwrap());
                     } else {
                         break;
@@ -805,7 +807,7 @@ fn parse(expr: &str) -> Expr {
                     if operator.is_function() {
                         output.push(operators.pop().unwrap());
                     } else {
-                        break
+                        break;
                     }
                 }
                 operators.push(token)
@@ -831,7 +833,6 @@ fn parse(expr: &str) -> Expr {
                 }
             }
         }
-
     }
     while let Some(operator) = operators.last() {
         if *operator != Token::LParen {
@@ -981,8 +982,8 @@ fn main() {
     display!(parse("0+x").simplify());
 
     println!();
-//    display!(parse("y[0]+exp(1/exp(y[1])+x)*y[11]"));
-//    display!(parse("1/exp(x)"));
+    //    display!(parse("y[0]+exp(1/exp(y[1])+x)*y[11]"));
+    //    display!(parse("1/exp(x)"));
     //display!(parse("y[0]*(-1.965927E+4)+y[11]*(2.1E+1/4.0E+2)"));
     display!(parse("y[0]*(-1.965927E+4)+y[11]*(2.1E+1/4.0E+2)-y[96]*(y[144]*5.3175E+1+y[145]*5.3175E+1+y[146]*5.3175E+1+y[147]*5.3175E+1+y[148]*5.3175E+1+y[149]*5.3175E+1+y[150]*5.3175E+1+y[151]*5.3175E+1+y[152]*5.3175E+1-8.343294077331707E+1)+y[6]*exp(y[153]*(-2.145E-2))*7.308510546875-y[0]*y[152]*2.493"));
 }
