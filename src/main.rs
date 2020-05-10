@@ -325,6 +325,7 @@ fn new_length_sum(args: &Vec<Expr>) -> usize {
 impl Expr {
     const ZERO: Expr = Constant(0.0);
     const ONE: Expr = Constant(1.0);
+    const MINUS_ONE: Expr = Constant(-1.0);
 
     fn is_expandable(&self) -> bool {
         match *self {
@@ -628,7 +629,7 @@ impl Expr {
     }
 }
 
-#[derive(Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq)]
 enum Token {
     Constant(Number),
     Variable(String),
@@ -641,7 +642,7 @@ enum Token {
     RParen,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 struct Number(f64); // we define this so that we can derive PartialEq for Token
                     // in effect, we assert here that the contents of Number is not NaN.
 
@@ -663,8 +664,8 @@ impl std::fmt::Display for Token {
             Token::Division => write!(f, "/"),
             Token::Addition => write!(f, "+"),
             Token::Subtraction => write!(f, "-"),
-            Token::RParen => write!(f, "("),
-            Token::LParen => write!(f, ")"),
+            Token::LParen => write!(f, "("),
+            Token::RParen => write!(f, ")"),
         }
     }
 }
@@ -725,57 +726,62 @@ fn parse(expr: &str) -> Expr {
     // least for characters. Hence the number ratio of operators to characters will remain less
     // than one half, even if operators other than +,-,*,/ are used.
     let mut operators = Vec::with_capacity(expr.len() / 2);
+    let mut option_last_token: Option<Token> = None;
     while expr != "" {
-        let mut option_token: Option<Token> = None;
-         if let Some(match_) = STARTS_WITH_NUMBER.find(expr) {
-             expr = &expr[match_.end()..];
-             option_token = Some(Token::Constant(Number(f64::from_str(match_.as_str()).unwrap())));
-         } else if let Some(match_) = STARTS_WITH_OPERATOR.find(expr) {
-            expr = &expr[match_.end()..];
-            match match_.as_str() {
-                "*" => option_token = Some(Token::Multiplication),
-                "/" => option_token = Some(Token::Division),
-                "+" | "-" => {
-                    if let Some(last) = output.last() {
-                        if last.is_variable() || last.is_constant() {
-                            // We do not want a unary plus or minus to be parsed as an operator
-                            // plus or minus.
-                            option_token = Some(match match_.as_str() {
-                                "+" => Token::Addition,
-                                "-" => Token::Subtraction,
-                                _ => panic!("internal error"),
-                            });
-                        }
-                    }
-                }
-                _ => panic!("internal error: unknown operator: {}", match_.as_str()),
-            }
-        }
-        let token = if let Some(unwrapped_token) = option_token {
-            unwrapped_token
-        } else {
-            if let Some(match_) = STARTS_WITH_FUNCTION.find(expr) {
-                expr = &expr[match_.end()..];
-                Token::Function(match match_.as_str() {
-                    "exp" => Exp,
-                    _ => panic!("internal error: unknown function {}", match_.as_str()),
-                })
-            } else if let Some(match_) = STARTS_WITH_VARIABLE.find(expr) {
-                expr = &expr[match_.end()..];
-                Token::Variable(match_.as_str().to_string())
-            } else if expr.starts_with('(') {
-                expr = &expr[1..];
-                Token::LParen
-            } else if expr.starts_with(')') {
-                expr = &expr[1..];
-                Token::RParen
+        let mut option_token = None;
+        if expr.starts_with('+') || expr.starts_with('-') {
+            let parse_as_operator = if let Some(last) = option_last_token {
+                last.is_constant() || last.is_variable() || last == Token::RParen
             } else {
-                panic!(
-                    "The expression is not valid. No operator, variable, or constant found at {}",
-                    expr
-                );
+                true
+            };
+            if parse_as_operator {
+                match expr.chars().next().unwrap() {
+                    '+' => option_token = Some(Token::Addition),
+                    '-' => option_token = Some(Token::Subtraction),
+                    _ => panic!("internal error")
+                }
             }
         };
+        let token = if let Some(unwrapped_token) = option_token {
+            expr = &expr[1..];
+            unwrapped_token
+        } else if let Some(match_) = STARTS_WITH_NUMBER.find(expr) {
+            expr = &expr[match_.end()..];
+            Token::Constant(Number(f64::from_str(match_.as_str()).unwrap()))
+        } else if let Some(match_) = STARTS_WITH_FUNCTION.find(expr) {
+            expr = &expr[match_.end()..];
+            Token::Function(match match_.as_str() {
+                "exp" => Exp,
+                _ => panic!("internal error: unknown function {}", match_.as_str()),
+            })
+        } else if let Some(match_) = STARTS_WITH_VARIABLE.find(expr) {
+            expr = &expr[match_.end()..];
+            Token::Variable(match_.as_str().to_string())
+        } else if expr.starts_with('*') {
+            expr = &expr[1..];
+            Token::Multiplication
+        } else if expr.starts_with('/') {
+            expr = &expr[1..];
+            Token::Division
+        } else if expr.starts_with('(') {
+            expr = &expr[1..];
+            Token::LParen
+        } else if expr.starts_with(')') {
+            expr = &expr[1..];
+            Token::RParen
+        } else {
+            panic!(
+                "The expression is not valid. No operator, variable, or constant found at {}",
+                expr
+            );
+        };
+        option_last_token = Some(token.clone());
+        // display!(token);
+        // display!(expr);
+        // debug!(operators);
+        // debug!(output);
+        // println!();
         match token {
             Token::Constant(_) | Token::Variable(_) => output.push(token),
             Token::Addition | Token::Subtraction => {
@@ -834,6 +840,7 @@ fn parse(expr: &str) -> Expr {
             }
         }
     }
+
     while let Some(operator) = operators.last() {
         if *operator != Token::LParen {
             output.push(operators.pop().unwrap())
@@ -844,8 +851,10 @@ fn parse(expr: &str) -> Expr {
             )
         }
     }
+    //debug!(output);
     let mut stack = Vec::with_capacity(output.len());
     for token in output {
+      //  debug!(stack);
         match token {
             Token::Constant(Number(c)) => stack.push(Constant(c)),
             Token::Variable(name) => stack.push(Variable(name)),
@@ -854,21 +863,28 @@ fn parse(expr: &str) -> Expr {
                 let arg = stack.pop().unwrap();
                 stack.push(Function(name, Box::new(arg)))
             }
+            Token::Addition | Token::Subtraction => {
+                let op1 = stack.pop().unwrap();
+                let op2 = stack.pop().unwrap_or(Expr::ZERO);
+                match token {
+                    Token::Addition => stack.push(Sum(vec![op2, op1])),
+                    Token::Subtraction => {
+                        let minus_op1 = Product(vec![Expr::MINUS_ONE, op1]);
+                        stack.push(Sum(vec![op2, minus_op1]))
+                    }
+                    _ => {}
+                }
+            }
             _ => {
                 let op1 = stack.pop().unwrap();
                 let op2 = stack.pop().unwrap();
                 match token {
                     // todo unwrap multiplications and sums in op1 and/or op2
                     Token::Multiplication => stack.push(Product(vec![op2, op1])),
-                    Token::Addition => stack.push(Sum(vec![op2, op1])),
-                    Token::Subtraction => {
-                        let minus_op1 = Product(vec![Constant(-1.0), op1]);
-                        stack.push(Sum(vec![op2, minus_op1]))
-                    }
                     Token::Division => {
                         let reciprocal_op1 = Power {
                             base: Box::new(op1),
-                            exp: Box::new(Constant(-1.0)),
+                            exp: Box::new(Expr::MINUS_ONE),
                         };
                         stack.push(Product(vec![op2, reciprocal_op1]))
                     }
@@ -876,6 +892,13 @@ fn parse(expr: &str) -> Expr {
                 }
             }
         }
+    }
+   // debug!(stack);
+    if stack.len() != 1 {
+        panic!(
+            "Internal Error, Stack should contain one element, but contains {} elements",
+            stack.len()
+        );
     }
     stack.pop().unwrap()
 }
@@ -968,7 +991,8 @@ fn main() {
 
     debug!(parse("3.4*x*y+z"));
     debug!(parse("(5+x+t)*(x+y)*z"));
-    debug!(parse("((x+y)*(x+y)+x)*(x+y)"));
+    debug!(parse("((x+y)*(x+y)+x)"));
+    debug!(parse("-x+y"));
     display!(multi_nom_coeff(&vec![2, 2]));
 
     display!(parse("x*(x+x) + y"));
@@ -985,5 +1009,15 @@ fn main() {
     //    display!(parse("y[0]+exp(1/exp(y[1])+x)*y[11]"));
     //    display!(parse("1/exp(x)"));
     //display!(parse("y[0]*(-1.965927E+4)+y[11]*(2.1E+1/4.0E+2)"));
-    display!(parse("y[0]*(-1.965927E+4)+y[11]*(2.1E+1/4.0E+2)-y[96]*(y[144]*5.3175E+1+y[145]*5.3175E+1+y[146]*5.3175E+1+y[147]*5.3175E+1+y[148]*5.3175E+1+y[149]*5.3175E+1+y[150]*5.3175E+1+y[151]*5.3175E+1+y[152]*5.3175E+1-8.343294077331707E+1)+y[6]*exp(y[153]*(-2.145E-2))*7.308510546875-y[0]*y[152]*2.493"));
+    //  display!(parse("y[0]*(-1.965927E+4)+y[11]*(2.1E+1/4.0E+2)-y[96]*(y[144]*5.3175E+1+y[145]*5.3175E+1+y[146]*5.3175E+1+y[147]*5.3175E+1+y[148]*5.3175E+1+y[149]*5.3175E+1+y[150]*5.3175E+1+y[151]*5.3175E+1+y[152]*5.3175E+1-8.343294077331707E+1)+y[6]*exp(y[153]*(-2.145E-2))*7.308510546875-y[0]*y[152]*2.493"));
+    display!(parse("y[0]*(-1.965927E+4)+y[11]*(2.1E+1/4.0E+2)-y[96]*(y[144]*5.3175E+1+y[145]*5.3175E+1+1-8.343294077331707E+1)+y[6]*exp(y[153]*(-2.145E-2))*7.308510546875-y[0]*y[152]*2.493"));
+    //display!(parse(
+    //    "y[0]*(-1.965927E+4)+y[11]*(2.1E+1/4.0E+2)-y[96]*(y[144]*5.3175E+1+y[145]*5.3175E+1)"
+    //));
+    display!(parse("x+y*(exp(y)+1)+y"));
+    //display!(parse("--x")); // panics
+    display!(parse("--1"));
+    //display!(parse("--(1)")); // panics
+    //display!(parse("(0)--(1)")); // panics
+    display!(parse("(0)--1"));
 }

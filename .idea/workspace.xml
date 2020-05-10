@@ -36,7 +36,7 @@
   <component name="PropertiesComponent">
     <property name="last_opened_file_path" value="$PROJECT_DIR$/../html_parser_rust/src/main.rs" />
     <property name="org.rust.cargo.project.model.PROJECT_DISCOVERY" value="true" />
-    <property name="settings.editor.selected.configurable" value="preferences.pluginManager" />
+    <property name="settings.editor.selected.configurable" value="preferences.toDoOptions" />
   </component>
   <component name="RunManager" selected="Cargo Command.Run rust_cas">
     <configuration name="Run rust_cas" type="CargoCommandRunConfiguration" factoryName="Cargo Command" temporary="true">
@@ -131,10 +131,10 @@
     <option name="oldMeFiltersMigrated" value="true" />
   </component>
   <component name="WindowStateProjectService">
-    <state x="451" y="212" key="#com.intellij.execution.impl.EditConfigurationsDialog" timestamp="1588689443646">
+    <state x="451" y="212" key="#com.intellij.execution.impl.EditConfigurationsDialog" timestamp="1589101017428">
       <screen x="67" y="30" width="1853" height="1050" />
     </state>
-    <state x="451" y="212" key="#com.intellij.execution.impl.EditConfigurationsDialog/67.30.1853.1050@67.30.1853.1050" timestamp="1588689443646" />
+    <state x="451" y="212" key="#com.intellij.execution.impl.EditConfigurationsDialog/67.30.1853.1050@67.30.1853.1050" timestamp="1589101017428" />
     <state x="611" y="354" width="755" height="399" key="#com.intellij.fileTypes.FileTypeChooser" timestamp="1588923362862">
       <screen x="67" y="30" width="1853" height="1050" />
     </state>
@@ -151,26 +151,26 @@
       <screen x="67" y="30" width="1853" height="1050" />
     </state>
     <state x="776" y="312" width="424" height="484" key="FileChooserDialogImpl/67.30.1853.1050@67.30.1853.1050" timestamp="1588761183485" />
-    <state width="1807" height="279" key="GridCell.Tab.0.bottom" timestamp="1589037311341">
+    <state width="1807" height="323" key="GridCell.Tab.0.bottom" timestamp="1589121644145">
       <screen x="67" y="30" width="1853" height="1050" />
     </state>
-    <state width="1807" height="279" key="GridCell.Tab.0.bottom/67.30.1853.1050@67.30.1853.1050" timestamp="1589037311341" />
-    <state width="1807" height="279" key="GridCell.Tab.0.center" timestamp="1589037311341">
+    <state width="1807" height="323" key="GridCell.Tab.0.bottom/67.30.1853.1050@67.30.1853.1050" timestamp="1589121644145" />
+    <state width="1807" height="323" key="GridCell.Tab.0.center" timestamp="1589121644145">
       <screen x="67" y="30" width="1853" height="1050" />
     </state>
-    <state width="1807" height="279" key="GridCell.Tab.0.center/67.30.1853.1050@67.30.1853.1050" timestamp="1589037311341" />
-    <state width="1807" height="279" key="GridCell.Tab.0.left" timestamp="1589037311341">
+    <state width="1807" height="323" key="GridCell.Tab.0.center/67.30.1853.1050@67.30.1853.1050" timestamp="1589121644145" />
+    <state width="1807" height="323" key="GridCell.Tab.0.left" timestamp="1589121644145">
       <screen x="67" y="30" width="1853" height="1050" />
     </state>
-    <state width="1807" height="279" key="GridCell.Tab.0.left/67.30.1853.1050@67.30.1853.1050" timestamp="1589037311341" />
-    <state width="1807" height="279" key="GridCell.Tab.0.right" timestamp="1589037311341">
+    <state width="1807" height="323" key="GridCell.Tab.0.left/67.30.1853.1050@67.30.1853.1050" timestamp="1589121644145" />
+    <state width="1807" height="323" key="GridCell.Tab.0.right" timestamp="1589121644145">
       <screen x="67" y="30" width="1853" height="1050" />
     </state>
-    <state width="1807" height="279" key="GridCell.Tab.0.right/67.30.1853.1050@67.30.1853.1050" timestamp="1589037311341" />
-    <state x="475" y="189" width="1354" height="730" key="SettingsEditor" timestamp="1587138142910">
+    <state width="1807" height="323" key="GridCell.Tab.0.right/67.30.1853.1050@67.30.1853.1050" timestamp="1589121644145" />
+    <state x="475" y="189" width="1354" height="730" key="SettingsEditor" timestamp="1589101151254">
       <screen x="67" y="30" width="1853" height="1050" />
     </state>
-    <state x="475" y="189" width="1354" height="730" key="SettingsEditor/67.30.1853.1050@67.30.1853.1050" timestamp="1587138142910" />
+    <state x="475" y="189" width="1354" height="730" key="SettingsEditor/67.30.1853.1050@67.30.1853.1050" timestamp="1589101151254" />
     <state x="656" y="260" width="672" height="678" key="search.everywhere.popup" timestamp="1588501610087">
       <screen x="67" y="30" width="1853" height="1050" />
     </state>
