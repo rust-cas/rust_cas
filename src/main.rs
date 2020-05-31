@@ -269,6 +269,13 @@ fn power(base: Expr, exp: Expr) -> Expr {
     }
 }
 
+fn reciprocal(expr: Expr) -> Expr {
+    Power {
+        base: Box::new(expr),
+        exp: Box::new(Expr::MINUS_ONE),
+    }
+}
+
 fn factorial(n: u64) -> u64 {
     (1..=n).product()
 }
@@ -512,9 +519,27 @@ impl Expr {
     }
 
     fn group(self) -> Expr {
+        match self {
+            Variable(_) => self,
+            Constant(_) => self,
+            E => self,
+            Function(funcname, arg) => Function(funcname, Box::new(arg.group())),
+            Sum(args) => {
+                let result = Sum(args.iter().map(|arg| arg.clone().group()).collect());
+                result.group_on_top_level()
+            }
+            Product(args) => {
+                let result = Product(args.iter().map(|arg| arg.clone().group()).collect());
+                result.group_on_top_level()
+            }
+            Power { base, exp } => power(base.group(), exp.group()),
+        }
+    }
+
+    fn group_on_top_level(self) -> Expr {
         let grouped = self.clone().group_once();
         if grouped != self {
-            grouped.group()
+            grouped.group_on_top_level()
         } else {
             grouped
         }
@@ -684,6 +709,36 @@ impl Expr {
         };
         simplified
     }
+
+    // fn cancel_factors(self) {
+    //     if let Product(args) = self {
+    //         let args = sort(&args);
+    //         let mut grouped = Vec::with_capacity(args.len());
+    //         let mut i = 0;
+    //         while i < args.len() {
+    //             let mut k = i;
+    //             let current = &args[i];
+    //             loop {
+    //                 k += 1;
+    //                 if k >= args.len() - 1 || *current != args[k] {
+    //                     break;
+    //                 }
+    //             }
+    //             if k < args.len() && *current == args[k] {
+    //                 k += 1
+    //             }
+    //             if k - i == 1 {
+    //                 // if the current argument is not repeated
+    //                 grouped.push(args[i].clone());
+    //             } else {
+    //                 let repeated = args[i].clone();
+    //                 let times = Constant((k - i) as f64);
+    //                 grouped.push(power(repeated, times));
+    //             }
+    //             i = k;
+    //         }
+    //     }
+    // }
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -763,7 +818,8 @@ fn parse(expr: &str) -> Expr {
     lazy_static! {
         static ref STARTS_WITH_NUMBER: Regex = get_starts_with_float_regex();
         static ref STARTS_WITH_OPERATOR: Regex = Regex::new(r"^[\+\*-/]").unwrap();
-        static ref STARTS_WITH_FUNCTION: Regex = get_starts_with_function_regex();
+        static ref STARTS_WITH_FUNCTION: Regex =
+            Regex::new("^sin|^cos|^tan|^sec|^csc|^cot|^exp|^log").unwrap();
         static ref STARTS_WITH_VARIABLE: Regex =
             Regex::new("^[a-zA-Z_]+\\[\\d+\\]|^[a-zA-Z_]+").unwrap();
     }
@@ -924,23 +980,23 @@ fn parse(expr: &str) -> Expr {
                     "log" => Function(Log, arg),
                     "sin" => Function(Sin, arg),
                     "cos" => Function(Cos, arg),
-                    "tan" => {
-                        let sin = Function(Sin, arg.clone());
-                        let cos = Function(Cos, arg);
-                        Product(vec![
-                            sin,
-                            Power {
-                                base: Box::new(cos),
-                                exp: Box::new(Expr::MINUS_ONE),
-                            },
-                        ])
-                    }
+                    "tan" => Product(vec![
+                        Function(Sin, arg.clone()),
+                        reciprocal(Function(Cos, arg)),
+                    ]),
+
+                    "sec" => reciprocal(Function(Cos, arg)),
+                    "csc" => reciprocal(Function(Sin, arg)),
+                    "cot" => Product(vec![
+                        Function(Cos, arg.clone()),
+                        reciprocal(Function(Sin, arg)),
+                    ]),
                     _ => panic!("internal error: unknown function {}", name),
                 });
             }
             Token::Addition | Token::Subtraction => {
                 let op1 = stack.pop().unwrap();
-                let op1= if token == Token::Subtraction {
+                let op1 = if token == Token::Subtraction {
                     Product(vec![Expr::MINUS_ONE, op1])
                 } else {
                     op1
@@ -1026,10 +1082,6 @@ fn get_starts_with_float_regex() -> Regex {
         |^ [\\+-]? \\d+                          ";
     let regex: String = regex.chars().filter(|c| !c.is_whitespace()).collect();
     Regex::new(&regex).unwrap()
-}
-
-fn get_starts_with_function_regex() -> Regex {
-    Regex::new("^sin|^cos|^tan|^exp|^log").unwrap()
 }
 
 fn main() {
@@ -1151,6 +1203,9 @@ fn main() {
     display!(parse("tan(x)"));
     display!(parse("tan(x)").derivative(x));
     display!(parse("tan(x)").derivative(x).simplify().group());
-    debug!(parse("tan(x)").derivative(x).group());
+    debug!(parse("tan(x)").derivative(x).group_on_top_level());
     display!(parse("sin(x)/(cos(x))*sin(x)").group());
+    display!(parse("sec(x)"));
+    display!(parse("csc(x)"));
+    display!(parse("cot(x)"));
 }
