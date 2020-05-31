@@ -9,6 +9,8 @@ use std::str::FromStr;
 use crate::Expr::*;
 use crate::FuncName::*;
 
+// TODO: support parsing ^ for exponentiation
+
 macro_rules! display {
     ($e:expr) => {
         println!("{} = {}", stringify!($e), $e);
@@ -38,6 +40,7 @@ enum Expr {
 enum FuncName {
     Sin,
     Cos,
+    Log,
 }
 
 impl PartialEq for Expr {
@@ -165,6 +168,7 @@ impl std::fmt::Display for FuncName {
             match self {
                 Sin => "sin",
                 Cos => "cos",
+                Log => "log",
             }
         )
     }
@@ -345,6 +349,13 @@ impl Expr {
     const ONE: Expr = Constant(1.0);
     const MINUS_ONE: Expr = Constant(-1.0);
 
+    fn is_constant(&self) -> bool {
+        match *self {
+            Constant(_) | E => true,
+            _ => false,
+        }
+    }
+
     fn is_expandable(&self) -> bool {
         match *self {
             Product(ref args) => args.iter().any(|arg| arg.is_addition()),
@@ -431,35 +442,31 @@ impl Expr {
                 }
                 Constant(_) => constant(0.0),
                 E => constant(0.0),
-                Function(func, arg) => match func {
-                    Sin => {
-                        if **arg == *x {
-                            Function(Cos, arg.clone())
-                        } else {
-                            Product(vec![
-                                Function(Cos, arg.clone()),
-                                arg.derivative_wo_simplification(x),
-                            ])
-                        }
+                Function(func, arg) => {
+                    let derivative = match func {
+                        Sin => Function(Cos, arg.clone()),
+                        Cos => Product(vec![Expr::MINUS_ONE, Function(Sin, arg.clone())]),
+                        Log => Power {
+                            base: arg.clone(),
+                            exp: Box::new(Expr::MINUS_ONE),
+                        },
+                    };
+                    if **arg != *x {
+                        Product(vec![derivative, arg.derivative_wo_simplification(x)])
+                    } else {
+                        derivative
                     }
-                    Cos => {
-                        if **arg == *x {
-                            Product(vec![Constant(-1.0), Function(Sin, arg.clone())])
-                        } else {
-                            Product(vec![
-                                Function(Cos, arg.clone()),
-                                arg.derivative_wo_simplification(x),
-                            ])
-                        }
-                    }
-                },
-                Sum(args) => {
-                    // todo filter out constants
-                    Sum(args
-                        .iter()
-                        .map(|e| e.derivative_wo_simplification(&x))
-                        .collect())
                 }
+                Sum(args) => Sum(args
+                    .iter()
+                    .filter_map(|e| {
+                        if !e.is_constant() {
+                            Some(e.derivative_wo_simplification(&x))
+                        } else {
+                            None
+                        }
+                    })
+                    .collect()),
                 Product(args) => {
                     let mut derivative = sum_skeleton(args.len());
                     let terms = derivative.get_args().unwrap();
@@ -476,7 +483,7 @@ impl Expr {
                     derivative
                 }
                 Power { base, exp } => {
-                    if  let Constant(n) = **exp {
+                    if let Constant(n) = **exp {
                         if n == 0.0 {
                             Expr::ONE
                         } else {
@@ -497,7 +504,7 @@ impl Expr {
                         //Variable(name) => if exp == x {},
                         panic!("unimplemented")
                     }
-                },
+                }
             }
         } else {
             panic!("x is not a variable")
@@ -679,28 +686,11 @@ impl Expr {
     }
 }
 
-#[derive(Copy, Clone, Debug, PartialEq, Eq, Ord, PartialOrd)]
-enum ParsedFuncName {
-    Exp,
-    Sin,
-    Cos,
-}
-
-impl std::fmt::Display for ParsedFuncName {
-    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{}", match self {
-            ParsedFuncName::Exp => "exp",
-            ParsedFuncName::Sin => "sin",
-            ParsedFuncName::Cos => "cos",
-        })
-    }
-}
-
 #[derive(Clone, Debug, Eq, PartialEq)]
-enum Token {
+enum Token<'e> {
     Constant(Number),
     Variable(String),
-    Function(ParsedFuncName),
+    Function(&'e str),
     Multiplication,
     Division,
     Addition,
@@ -722,7 +712,7 @@ impl std::cmp::PartialEq for Number {
 
 impl std::cmp::Eq for Number {}
 
-impl std::fmt::Display for Token {
+impl std::fmt::Display for Token<'_> {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         match self {
             Token::Constant(Number(c)) => write!(f, "{}", c),
@@ -738,7 +728,7 @@ impl std::fmt::Display for Token {
     }
 }
 
-impl Token {
+impl Token<'_> {
     fn is_function(&self) -> bool {
         match self {
             Token::Function(_) => true,
@@ -819,12 +809,7 @@ fn parse(expr: &str) -> Expr {
             Token::Constant(Number(f64::from_str(match_.as_str()).unwrap()))
         } else if let Some(match_) = STARTS_WITH_FUNCTION.find(expr) {
             expr = &expr[match_.end()..];
-            Token::Function(match match_.as_str() {
-                "exp" => ParsedFuncName::Exp,
-                "sin" => ParsedFuncName::Sin,
-                "cos" => ParsedFuncName::Cos,
-                _ => panic!("internal error: unknown function {}", match_.as_str()),
-            })
+            Token::Function(match_.as_str())
         } else if let Some(match_) = STARTS_WITH_VARIABLE.find(expr) {
             expr = &expr[match_.end()..];
             Token::Variable(match_.as_str().to_string())
@@ -931,47 +916,86 @@ fn parse(expr: &str) -> Expr {
             Token::LParen | Token::RParen => {}
             Token::Function(name) => {
                 let arg = Box::new(stack.pop().unwrap());
-                stack.push(match name {
-                    ParsedFuncName::Exp => Power {
+                stack.push(match &name[..] {
+                    "exp" => Power {
                         base: Box::new(E),
                         exp: arg,
                     },
-                    ParsedFuncName::Sin => Function(Sin, arg),
-                    ParsedFuncName::Cos => Function(Cos, arg),
+                    "log" => Function(Log, arg),
+                    "sin" => Function(Sin, arg),
+                    "cos" => Function(Cos, arg),
+                    "tan" => {
+                        let sin = Function(Sin, arg.clone());
+                        let cos = Function(Cos, arg);
+                        Product(vec![
+                            sin,
+                            Power {
+                                base: Box::new(cos),
+                                exp: Box::new(Expr::MINUS_ONE),
+                            },
+                        ])
+                    }
+                    _ => panic!("internal error: unknown function {}", name),
                 });
             }
             Token::Addition | Token::Subtraction => {
                 let op1 = stack.pop().unwrap();
+                let op1= if token == Token::Subtraction {
+                    Product(vec![Expr::MINUS_ONE, op1])
+                } else {
+                    op1
+                };
                 let op2 = stack.pop().unwrap_or(Expr::ZERO);
-                match token {
-                    Token::Addition => stack.push(Sum(vec![op2, op1])),
-                    Token::Subtraction => {
-                        let minus_op1 = Product(vec![Expr::MINUS_ONE, op1]);
-                        stack.push(Sum(vec![op2, minus_op1]))
+                if let Sum(mut op2_args) = op2 {
+                    if let Sum(mut op1_args) = op1 {
+                        op2_args.append(&mut op1_args);
+                        stack.push(Sum(op2_args))
+                    } else {
+                        op2_args.push(op1);
+                        stack.push(Sum(op2_args))
                     }
-                    _ => {}
+                } else {
+                    if let Sum(mut op1_args) = op1 {
+                        op1_args.insert(0, op2);
+                        stack.push(Sum(op1_args))
+                    } else {
+                        stack.push(Sum(vec![op2, op1]))
+                    }
                 }
             }
-            _ => {
+            Token::Multiplication | Token::Division => {
                 let op1 = stack.pop().unwrap();
-                let op2 = stack.pop().unwrap();
-                match token {
-                    // todo unwrap multiplications and sums in op1 and/or op2
-                    Token::Multiplication => stack.push(Product(vec![op2, op1])),
-                    Token::Division => {
-                        let reciprocal_op1 = Power {
-                            base: Box::new(op1),
-                            exp: Box::new(Expr::MINUS_ONE),
-                        };
-                        stack.push(Product(vec![op2, reciprocal_op1]))
+                let op1 = if token == Token::Division {
+                    Power {
+                        base: Box::new(op1),
+                        exp: Box::new(Expr::MINUS_ONE),
                     }
-                    _ => panic!("unexpected token {}", token),
+                } else {
+                    op1
+                };
+                let op2 = stack.pop().unwrap();
+                if let Product(mut op2_args) = op2 {
+                    if let Product(mut op1_args) = op1 {
+                        op2_args.append(&mut op1_args);
+                        stack.push(Product(op2_args))
+                    } else {
+                        op2_args.push(op1);
+                        stack.push(Product(op2_args))
+                    }
+                } else {
+                    if let Product(mut op1_args) = op1 {
+                        op1_args.insert(0, op2);
+                        stack.push(Product(op1_args))
+                    } else {
+                        stack.push(Product(vec![op2, op1]))
+                    }
                 }
             }
         }
     }
     // debug!(stack);
     if stack.len() != 1 {
+        debug!(stack);
         panic!(
             "Internal Error, Stack should contain one element, but contains {} elements",
             stack.len()
@@ -1005,7 +1029,7 @@ fn get_starts_with_float_regex() -> Regex {
 }
 
 fn get_starts_with_function_regex() -> Regex {
-    Regex::new("^sin|^cos|^exp").unwrap()
+    Regex::new("^sin|^cos|^tan|^exp|^log").unwrap()
 }
 
 fn main() {
@@ -1121,5 +1145,12 @@ fn main() {
     display!(parse("sin(exp(x))").derivative(x));
     display!(parse("exp(exp(x))").derivative(x));
     display!(parse("exp(sin(x))").derivative(x));
-    //display!(parse("sin(x)").derivative(x))
+
+    display!(parse("log(sin(x))"));
+    display!(parse("log(sin(x))").derivative(x));
+    display!(parse("tan(x)"));
+    display!(parse("tan(x)").derivative(x));
+    display!(parse("tan(x)").derivative(x).simplify().group());
+    debug!(parse("tan(x)").derivative(x).group());
+    display!(parse("sin(x)/(cos(x))*sin(x)").group());
 }
