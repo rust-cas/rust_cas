@@ -2,7 +2,7 @@ use itertools::Itertools;
 use regex::Regex;
 
 use std::cmp::Ordering;
-use std::fmt::Formatter;
+use std::fmt::{Formatter, Debug, Display};
 use std::fmt::Write;
 use std::str::FromStr;
 
@@ -34,6 +34,12 @@ enum Expr {
     Sum(Vec<Expr>),
     Product(Vec<Expr>),
     Power { base: Box<Expr>, exp: Box<Expr> },
+}
+
+#[derive(Clone, Debug)]
+struct Factor {
+    base: Expr,
+    exp: f64,
 }
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Ord, PartialOrd)]
@@ -263,7 +269,6 @@ fn sum_skeleton(size: usize) -> Expr {
 }
 
 
-
 trait ExprContainer {
     fn get(self) -> Expr;
     fn get_box(self) -> Box<Expr>;
@@ -387,6 +392,16 @@ fn new_length_sum(args: &Vec<Expr>) -> usize {
     new_length
 }
 
+fn factor_to_expr(factor: Factor) -> Expr {
+    let Factor{base, exp} = factor;
+    if exp == 1.0 {
+        base
+    } else {
+        power(base, Constant(exp))
+    }
+}
+
+
 impl Expr {
     const ZERO: Expr = Constant(0.0);
     const ONE: Expr = Constant(1.0);
@@ -396,6 +411,13 @@ impl Expr {
         match *self {
             Constant(_) | E => true,
             _ => false,
+        }
+    }
+
+    fn is_power(&self) -> bool {
+        match *self {
+            Power { .. } => true,
+            _ => false
         }
     }
 
@@ -746,16 +768,42 @@ impl Expr {
         simplified
     }
 
-    // fn cancel_factors(self) {
-    //     if let Product(args) = self {
-    //         let args = sort(&args);
-    //         let mut grouped = Vec::with_capacity(args.len());
-    //         let mut i = 0;
-    //         while i < args.len() {
-    //             if let
-    //         }
-    //     }
-    // }
+
+    fn cancel_factors(self) -> Expr {
+        if let Product(args) = &self {
+            let mut factors = args.iter().map(|arg| match arg {
+                Power { base, exp } => {
+                    if let Constant(c) = **exp {
+                        Factor { base: *base.clone(), exp: c }
+                    } else {
+                        Factor { base: (*arg).clone(), exp: 1.0 }
+                    }
+                }
+                _ => Factor{base: (*arg).clone(), exp: 1.0}
+            }).collect::<Vec<Factor>>();
+            factors.sort_unstable_by_key(|Factor{base, ..}| base.to_string());
+            let mut cancelled:Vec<Expr> = Vec::new();
+            while let Some(current) = factors.pop() {
+                let mut accumulated_exp = current.exp;
+                while let Some(factor) = factors.last() {
+                    if factor.base == current.base {
+                        accumulated_exp += factor.exp;
+                        factors.pop();
+                    } else {
+                        break
+                    }
+                }
+                if accumulated_exp != 1.0 {
+                    cancelled.push(power(current.base,Constant(accumulated_exp)))
+                } else {
+                    cancelled.push(factor_to_expr(current));
+                }
+            }
+            Product(cancelled)
+        } else {
+            self
+        }
+    }
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -773,8 +821,8 @@ enum Token<'e> {
 
 #[derive(Debug, Clone)]
 struct Number(f64); // we define this so that we can derive PartialEq for Token
-                    // in effect, we assert here (by implementing std::cmd::PartialEq for Number)
-                    // that the contents of Number is not NaN.
+// in effect, we assert here (by implementing std::cmd::Eq for Number)
+// that the contents of Number is not NaN.
 
 impl std::cmp::PartialEq for Number {
     fn eq(&self, other: &Self) -> bool {
@@ -1017,10 +1065,10 @@ fn parse(expr: &str) -> Expr {
                         Function(Cos, arg.clone()),
                         reciprocal(Function(Sin, arg)),
                     ]),
-                     "sinh" => {
-                         Sum(vec![Product(vec![Constant(0.5), exp(arg.clone())]),
-                                  Product(vec![Constant(-0.5),exp(minus(arg))])])
-                    },
+                    "sinh" => {
+                        Sum(vec![Product(vec![Constant(0.5), exp(arg.clone())]),
+                                 Product(vec![Constant(-0.5), exp(minus(arg))])])
+                    }
                     "cosh" => Product(vec![Constant(0.5), Sum(vec![exp(arg.clone()), exp(minus(arg))])]),
                     "tanh" => {
                         let twice_arg = Product(vec![Constant(2.0), *arg]);
@@ -1033,7 +1081,7 @@ fn parse(expr: &str) -> Expr {
             Token::Addition | Token::Subtraction => {
                 let op1 = stack.pop().unwrap();
                 let op1 = if token == Token::Subtraction {
-                    Product(vec![Expr::MINUS_ONE, op1])
+                    minus(op1)
                 } else {
                     op1
                 };
@@ -1058,10 +1106,7 @@ fn parse(expr: &str) -> Expr {
             Token::Multiplication | Token::Division => {
                 let op1 = stack.pop().unwrap();
                 let op1 = if token == Token::Division {
-                    Power {
-                        base: Box::new(op1),
-                        exp: Box::new(Expr::MINUS_ONE),
-                    }
+                    reciprocal(op1)
                 } else {
                     op1
                 };
@@ -1240,4 +1285,13 @@ fn main() {
     display!(parse("sinh(x)"));
     display!(parse("cosh(x)"));
     display!(parse("tanh(x)"));
+    display!(parse("sec(sin(x+1))"));
+    display!(parse("csc(sin(x+1))"));
+    display!(parse("cot(sin(x+1))"));
+    display!(parse("sinh(sin(x+1))"));
+    display!(parse("cosh(sin(x+1))"));
+    display!(parse("tanh(sin(x+1))"));
+    display!(parse("a/a"));
+    debug!(parse("a/a/b*c"));
+    display!(parse("a/a*b*c").cancel_factors());
 }
