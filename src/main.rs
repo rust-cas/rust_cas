@@ -262,16 +262,52 @@ fn sum_skeleton(size: usize) -> Expr {
     Sum(Vec::with_capacity(size))
 }
 
-fn power(base: Expr, exp: Expr) -> Expr {
-    Power {
-        base: Box::new(base.clone()),
-        exp: Box::new(exp.clone()),
+
+
+trait ExprContainer {
+    fn get(self) -> Expr;
+    fn get_box(self) -> Box<Expr>;
+}
+
+impl ExprContainer for Expr {
+    fn get(self) -> Expr {
+        self
+    }
+    fn get_box(self) -> Box<Expr> {
+        Box::new(self)
     }
 }
 
-fn reciprocal(expr: Expr) -> Expr {
+impl ExprContainer for Box<Expr> {
+    fn get(self) -> Expr {
+        *self
+    }
+    fn get_box(self) -> Box<Expr> {
+        self
+    }
+}
+
+fn power<T: Sized + ExprContainer>(base: T, exp: T) -> Expr {
     Power {
-        base: Box::new(expr),
+        base: base.get_box(),
+        exp: exp.get_box(),
+    }
+}
+
+fn exp<T: Sized + ExprContainer>(arg: T) -> Expr {
+    Power {
+        base: Box::new(E),
+        exp: arg.get_box(),
+    }
+}
+
+fn minus<T: Sized + ExprContainer>(arg: T) -> Expr {
+    Product(vec![Expr::MINUS_ONE, arg.get()])
+}
+
+fn reciprocal<T: Sized + ExprContainer>(expr: T) -> Expr {
+    Power {
+        base: expr.get_box(),
         exp: Box::new(Expr::MINUS_ONE),
     }
 }
@@ -716,26 +752,7 @@ impl Expr {
     //         let mut grouped = Vec::with_capacity(args.len());
     //         let mut i = 0;
     //         while i < args.len() {
-    //             let mut k = i;
-    //             let current = &args[i];
-    //             loop {
-    //                 k += 1;
-    //                 if k >= args.len() - 1 || *current != args[k] {
-    //                     break;
-    //                 }
-    //             }
-    //             if k < args.len() && *current == args[k] {
-    //                 k += 1
-    //             }
-    //             if k - i == 1 {
-    //                 // if the current argument is not repeated
-    //                 grouped.push(args[i].clone());
-    //             } else {
-    //                 let repeated = args[i].clone();
-    //                 let times = Constant((k - i) as f64);
-    //                 grouped.push(power(repeated, times));
-    //             }
-    //             i = k;
+    //             if let
     //         }
     //     }
     // }
@@ -816,10 +833,20 @@ fn display_vec_token(vec_token: &Vec<Token>) {
 fn parse(expr: &str) -> Expr {
     let original_expr = expr;
     lazy_static! {
-        static ref STARTS_WITH_NUMBER: Regex = get_starts_with_float_regex();
+        static ref STARTS_WITH_NUMBER: Regex = get_regex_ignoring_whitespace(
+            "^ [\\+-]? \\d+\\.\\d* [Ee] [\\+-]? \\d+ \
+            |^ [\\+-]? \\.\\d+     [Ee] [\\+-]? \\d+ \
+            |^ [\\+-]? \\d+        [Ee] [\\+-]? \\d+ \
+            |^ [\\+-]? \\d+\\.\\d*                   \
+            |^ [\\+-]? \\.\\d+                       \
+            |^ [\\+-]? \\d+                          "
+        );
         static ref STARTS_WITH_OPERATOR: Regex = Regex::new(r"^[\+\*-/]").unwrap();
-        static ref STARTS_WITH_FUNCTION: Regex =
-            Regex::new("^sin|^cos|^tan|^sec|^csc|^cot|^exp|^log").unwrap();
+        static ref STARTS_WITH_FUNCTION: Regex = get_regex_ignoring_whitespace(
+            "^sinh|^cosh|^tanh|\
+             ^sin |^cos |^tan |^sec|^csc|^cot|\
+             ^exp|^log"
+        );
         static ref STARTS_WITH_VARIABLE: Regex =
             Regex::new("^[a-zA-Z_]+\\[\\d+\\]|^[a-zA-Z_]+").unwrap();
     }
@@ -962,7 +989,6 @@ fn parse(expr: &str) -> Expr {
             )
         }
     }
-    //debug!(output);
     let mut stack = Vec::with_capacity(output.len());
     for token in output {
         //  debug!(stack);
@@ -991,6 +1017,16 @@ fn parse(expr: &str) -> Expr {
                         Function(Cos, arg.clone()),
                         reciprocal(Function(Sin, arg)),
                     ]),
+                     "sinh" => {
+                         Sum(vec![Product(vec![Constant(0.5), exp(arg.clone())]),
+                                  Product(vec![Constant(-0.5),exp(minus(arg))])])
+                    },
+                    "cosh" => Product(vec![Constant(0.5), Sum(vec![exp(arg.clone()), exp(minus(arg))])]),
+                    "tanh" => {
+                        let twice_arg = Product(vec![Constant(2.0), *arg]);
+                        Product(vec![Sum(vec![exp(twice_arg.clone()), Expr::MINUS_ONE]),
+                                     reciprocal(Sum(vec![exp(twice_arg), Expr::ONE]))])
+                    }
                     _ => panic!("internal error: unknown function {}", name),
                 });
             }
@@ -1072,14 +1108,7 @@ fn parse(expr: &str) -> Expr {
 //     debug!(regex.find(".3+      ").unwrap().as_str());
 //     debug!(regex.find("3+       ").unwrap().as_str());
 
-fn get_starts_with_float_regex() -> Regex {
-    let regex = "\
-         ^ [\\+-]? \\d+\\.\\d* [Ee] [\\+-]? \\d+ \
-        |^ [\\+-]? \\.\\d+     [Ee] [\\+-]? \\d+ \
-        |^ [\\+-]? \\d+        [Ee] [\\+-]? \\d+ \
-        |^ [\\+-]? \\d+\\.\\d*                   \
-        |^ [\\+-]? \\.\\d+                       \
-        |^ [\\+-]? \\d+                          ";
+fn get_regex_ignoring_whitespace(regex: &str) -> Regex {
     let regex: String = regex.chars().filter(|c| !c.is_whitespace()).collect();
     Regex::new(&regex).unwrap()
 }
@@ -1208,4 +1237,7 @@ fn main() {
     display!(parse("sec(x)"));
     display!(parse("csc(x)"));
     display!(parse("cot(x)"));
+    display!(parse("sinh(x)"));
+    display!(parse("cosh(x)"));
+    display!(parse("tanh(x)"));
 }
