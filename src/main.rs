@@ -2,6 +2,7 @@ use itertools::Itertools;
 use regex::Regex;
 
 use std::cmp::Ordering;
+use std::cmp::Reverse;
 use std::fmt::{Formatter, Debug, Display};
 use std::fmt::Write;
 use std::str::FromStr;
@@ -607,49 +608,45 @@ impl Expr {
         // group equal expressions
         // for example, turn x+x into 2*x, or x*x into x^2
         match self {
-            Sum(args) => {
-                let args = sort(&args);
+            Sum(mut args) => {
+                args.sort_by_key(|arg| Reverse(arg.to_string()));
                 let mut grouped = Vec::with_capacity(args.len());
-                let mut i = 0;
-                while i < args.len() {
-                    let mut k = i;
-                    let current = &args[i];
-                    loop {
-                        k += 1;
-                        if k >= args.len() - 1 || *current != args[k] {
-                            break;
+                while let Some(current) = args.pop() {
+                    let mut count:f64 = 1.0;
+                    while let Some(arg) = args.last() {
+                        if current == *arg {
+                            count += 1.0;
+                            args.pop();
+                        } else {
+                            break
                         }
                     }
-                    if k < args.len() && *current == args[k] {
-                        k += 1
-                    }
-                    if k - i == 1 {
-                        // if the current argument is not repeated
-                        grouped.push(args[i].clone());
+                    if count == 1.0 {
+                        grouped.push(current)
                     } else {
-                        let repeated = args[i].clone();
-                        let times = Constant((k - i) as f64);
-                        grouped.push(match repeated {
-                            Product(ref repeated_args) => {
-                                // if the repeated expression is a multiplication,
-                                // we just insert times into repeated_args
-                                let mut repeated_args = repeated_args.clone();
-                                repeated_args.insert(0, times);
-                                Product(repeated_args)
-                            }
-                            _ => Product(vec![times, repeated]),
-                        });
+                        grouped.push(Product(vec![Constant(count), current]))
                     }
-                    i = k;
                 }
                 match grouped.len() {
                     1 => grouped[0].clone(),
                     _ => Sum(grouped),
                 }
             }
-            Product(args) => {
-                let args = sort(&args);
+            Product(mut args) => {
+                args.sort_by_key(|arg| Reverse(arg.to_string()));
                 let mut grouped = Vec::with_capacity(args.len());
+                while let Some(current) = args.pop() {
+                    let mut count: f64 = 0.0;
+                    while let Some(arg) = args.last() {
+                        if current == *arg {
+                            count += 1.0;
+                            args.pop();
+                        } else {
+                            break
+                        }
+                    }
+                }
+                
                 let mut i = 0;
                 while i < args.len() {
                     let mut k = i;
@@ -781,7 +778,7 @@ impl Expr {
                 }
                 _ => Factor{base: (*arg).clone(), exp: 1.0}
             }).collect::<Vec<Factor>>();
-            factors.sort_unstable_by_key(|Factor{base, ..}| base.to_string());
+            factors.sort_by_key(|Factor{base, ..}| Reverse(base.to_string()));
             let mut cancelled:Vec<Expr> = Vec::new();
             while let Some(current) = factors.pop() {
                 let mut accumulated_exp = current.exp;
@@ -793,13 +790,18 @@ impl Expr {
                         break
                     }
                 }
-                if accumulated_exp != 1.0 {
+                if accumulated_exp == 0.0 {
+                    continue
+                } else if accumulated_exp != 1.0 {
                     cancelled.push(power(current.base,Constant(accumulated_exp)))
                 } else {
                     cancelled.push(factor_to_expr(current));
                 }
+            };
+            match cancelled.len() {
+                1 => cancelled.pop().unwrap(),
+                _ => Product(cancelled)
             }
-            Product(cancelled)
         } else {
             self
         }
@@ -909,10 +911,10 @@ fn parse(expr: &str) -> Expr {
     // has two inputs that are either two variables, two constants, or one of each.
     // The other operators need at most one other variable or constant. Hence there should be
     // at least one more non-operator (i.e. a variable or a constant) than there are operators.
-    // Hence if there are only +,-,*,/ operators, the number of operators is less than half the
-    // number of characters.
+    // Hence if there are only +,-,*,/ operators, the number of operators is strictly less than
+    // half the number of characters.
     // Suppose there is another operator. Unary operators such as ln(), sin() or cos(), use at
-    // least for characters. Hence the number ratio of operators to characters will remain less
+    // least four characters. Hence the number ratio of operators to characters will remain less
     // than one half, even if operators other than +,-,*,/ are used.
     let mut operators = Vec::with_capacity(expr.len() / 2);
     let mut option_last_token: Option<Token> = None;
