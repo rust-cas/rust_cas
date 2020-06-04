@@ -636,7 +636,7 @@ impl Expr {
                 args.sort_by_key(|arg| Reverse(arg.to_string()));
                 let mut grouped = Vec::with_capacity(args.len());
                 while let Some(current) = args.pop() {
-                    let mut count: f64 = 0.0;
+                    let mut count: f64 = 1.0;
                     while let Some(arg) = args.last() {
                         if current == *arg {
                             count += 1.0;
@@ -645,30 +645,11 @@ impl Expr {
                             break
                         }
                     }
-                }
-                
-                let mut i = 0;
-                while i < args.len() {
-                    let mut k = i;
-                    let current = &args[i];
-                    loop {
-                        k += 1;
-                        if k >= args.len() - 1 || *current != args[k] {
-                            break;
-                        }
-                    }
-                    if k < args.len() && *current == args[k] {
-                        k += 1
-                    }
-                    if k - i == 1 {
-                        // if the current argument is not repeated
-                        grouped.push(args[i].clone());
+                    if count == 1.0 {
+                        grouped.push(current)
                     } else {
-                        let repeated = args[i].clone();
-                        let times = Constant((k - i) as f64);
-                        grouped.push(power(repeated, times));
+                        grouped.push(power(current, Constant(count)))
                     }
-                    i = k;
                 }
                 match grouped.len() {
                     1 => grouped[0].clone(),
